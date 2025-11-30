@@ -177,6 +177,21 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.effective_message.reply_text(
             "Desculpe, ocorreu um erro interno ao processar seu comando. Tente novamente mais tarde."
         )
+def main_bot(token: str) -> Application:
+    # ... (código existente)
+
+    # Handlers de Comandos
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("status", status))
+    application.add_handler(CommandHandler("daily", daily_claim))
+    
+    # Handler de Callback (para seleção de classe)
+    application.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
+
+    # --- Adicionar o Handler de Erro ---
+    application.add_handler(ErrorHandler(error_handler))
+
+    return application
 
 def main_bot(token: str) -> Application:
     """Configura e retorna a aplicação do bot."""
