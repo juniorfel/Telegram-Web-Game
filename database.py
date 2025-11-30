@@ -18,11 +18,15 @@ class Player(Base):
     username = Column(String(50), nullable=True)
     name = Column(String(15))
     class_name = Column(String(20))
+    
+    # Progresso
     level = Column(Integer, default=1)
     xp = Column(Integer, default=0)
     gold = Column(Integer, default=1000)
     gems = Column(Integer, default=0)
     current_phase_id = Column(Integer, default=1)
+    
+    # Atributos de Batalha
     health = Column(Integer)
     max_health = Column(Integer)
     strength = Column(Integer)
@@ -32,8 +36,17 @@ class Player(Base):
     crit_chance = Column(Integer, default=5)
     stamina = Column(Integer, default=5)
     max_stamina = Column(Integer, default=5)
+    
+    # Social
     pvp_rating = Column(Integer, default=1000)
     guild_id = Column(Integer, ForeignKey("guilds.id"), nullable=True)
+    
+    # --- NOVO: SISTEMA DE FAZENDA ---
+    farm_level = Column(Integer, default=1)      # Nível dos Campos (Produção)
+    barn_level = Column(Integer, default=1)      # Nível do Celeiro (Armazenamento)
+    last_farm_harvest = Column(DateTime, default=datetime.now) # Última colheita
+
+    # Timestamps
     last_daily_claim = Column(DateTime, default=datetime.min)
     last_stamina_gain = Column(DateTime, default=datetime.min)
 
@@ -41,8 +54,10 @@ class Guild(Base):
     __tablename__ = "guilds"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), unique=True)
+    telegram_link = Column(String(100)) # Link do Grupo
     leader_id = Column(BigInteger)
     total_rating = Column(Integer, default=0)
+    member_count = Column(Integer, default=1) # Contador simples
     created_at = Column(DateTime, default=datetime.now)
 
 def seed_bots(db):
