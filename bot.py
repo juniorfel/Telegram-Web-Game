@@ -126,7 +126,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db.close()
 
 async def show_main_menu(update: Update, player: Player):
-    kb = [
+    # DEFINIÇÃO DO TECLADO DO MENU PRINCIPAL (CORRIGIDO)
+    keyboard = [
         [InlineKeyboardButton("Info/Perfil ❓", callback_data='menu_info'),
          InlineKeyboardButton("Batalhar ⚔️", callback_data='menu_battle_mode'),
          InlineKeyboardButton("Diário 🎁", callback_data='menu_daily')],
