@@ -104,22 +104,19 @@ def seed_bots(db):
     print("Bots criados com sucesso!")
 
 def init_db():
-    """Inicializa o Banco de Dados"""
+    print("✅ Banco de Dados Carregado!")
     
-    # ---------------------------------------------------------
-    # 🔴 FIX DE RESET: APAGA E CRIA NOVAS TABELAS PARA CORRIGIR SCHEMA
-    Base.metadata.drop_all(bind=engine) 
-    # ---------------------------------------------------------
-
-    # Cria as tabelas novas (Corretas)
+    # 1. REMOVA A LINHA DE DROP AQUI.
+    
+    # 2. Cria as tabelas novas
     Base.metadata.create_all(bind=engine)
     
-    # Cria os bots
+    # 3. Cria os bots
     db = SessionLocal()
     seed_bots(db)
     db.close()
     
-    print("✅ Esquema corrigido e Banco de Dados atualizado!")
+    # ...
 
 def get_db():
     db = SessionLocal()
