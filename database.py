@@ -19,13 +19,12 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Player(Base):
     __tablename__ = "players"
-
-    id = Column(BigInteger, primary_key=True, index=True) # ID do Telegram
+    id = Column(BigInteger, primary_key=True, index=True)
     username = Column(String(50), nullable=True)
-    name = Column(String(15)) # Limite 15 chars
+    name = Column(String(15))
     class_name = Column(String(20))
     
-    # Progresso Principal
+    # Progresso
     level = Column(Integer, default=1)
     xp = Column(Integer, default=0)
     gold = Column(Integer, default=1000)
@@ -38,32 +37,31 @@ class Player(Base):
     strength = Column(Integer)
     intelligence = Column(Integer)
     defense = Column(Integer)
-    speed = Column(Integer, default=5)      # Velocidade/Iniciativa
-    crit_chance = Column(Integer, default=5) # Chance Crítica (%)
+    speed = Column(Integer, default=5)
+    crit_chance = Column(Integer, default=5)
     
-    # Recursos de Energia
+    # Recursos
     stamina = Column(Integer, default=5)
     max_stamina = Column(Integer, default=5)
     
-    # Social (Guilda e PvP)
+    # Social
     pvp_rating = Column(Integer, default=1000)
     guild_id = Column(Integer, ForeignKey("guilds.id"), nullable=True)
     
-    # Sistema de Fazenda (Novos Campos)
-    farm_level = Column(Integer, default=1)      # Nível da Plantação
-    barn_level = Column(Integer, default=1)      # Nível do Celeiro
-    last_farm_harvest = Column(DateTime, default=datetime.now) # Última colheita
+    # Fazenda
+    farm_level = Column(Integer, default=1)
+    barn_level = Column(Integer, default=1)
+    last_farm_harvest = Column(DateTime, default=datetime.now)
 
-    # Timestamps para Cooldowns
+    # Timestamps
     last_daily_claim = Column(DateTime, default=datetime.min)
     last_stamina_gain = Column(DateTime, default=datetime.min)
 
 class Guild(Base):
     __tablename__ = "guilds"
-    
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), unique=True)
-    telegram_link = Column(String(100)) # Link do Grupo Telegram
+    telegram_link = Column(String(100))
     leader_id = Column(BigInteger)
     total_rating = Column(Integer, default=0)
     member_count = Column(Integer, default=1)
@@ -74,7 +72,7 @@ class Guild(Base):
 def seed_bots(db):
     """Cria 200 bots se o banco estiver vazio para popular o Ranking"""
     if db.query(Player).count() > 10:
-        return # Já existem jogadores, não cria bots
+        return
 
     print("Populando Ranking com 200 Bots...")
     
@@ -84,25 +82,14 @@ def seed_bots(db):
     
     bots = []
     for i in range(200):
-        # Gera nome aleatório
-        name = f"{random.choice(prefixes)}{random.choice(suffixes)}{random.randint(1, 99)}"
-        name = name[:15] # Garante limite de caracteres
-        
+        name = f"{random.choice(prefixes)}{random.choice(suffixes)}{random.randint(1, 99)}"[:15]
         char_class = random.choice(classes)
         lvl = random.randint(1, 50)
         
-        # Cria o Bot com status variados
         bot = Player(
-            id=100000 + i, # ID Falso
-            username=f"bot_{i}",
-            name=name,
-            class_name=char_class,
-            level=lvl,
-            xp=0,
-            gold=random.randint(100, 50000),
-            gems=random.randint(0, 100),
+            id=100000 + i, username=f"bot_{i}", name=name, class_name=char_class,
+            level=lvl, xp=0, gold=random.randint(100, 50000), gems=random.randint(0, 100),
             pvp_rating=1000 + (lvl * 10) + random.randint(-50, 50),
-            # Status base genéricos para o bot
             health=100, max_health=100, strength=10, intelligence=10, defense=10,
             speed=5, crit_chance=5
         )
@@ -114,7 +101,7 @@ def seed_bots(db):
 
 def init_db():
     """Inicializa o Banco de Dados (Modo Seguro)"""
-    # Cria as tabelas se não existirem (não apaga nada)
+    # Cria as tabelas se não existirem (não apaga nada, mas cria as novas colunas que faltarem)
     Base.metadata.create_all(bind=engine)
     
     # Cria os bots se necessário
@@ -123,7 +110,6 @@ def init_db():
     db.close()
     
     print("✅ Banco de Dados Carregado!")
-
 
 def get_db():
     db = SessionLocal()
