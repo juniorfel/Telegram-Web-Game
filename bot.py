@@ -35,11 +35,14 @@ BASE_STATS = {
     "Paladino": {"str": 9, "int": 7, "def": 10, "hp": 60, "spd": 3, "crit": 3, "desc": "✨ Fé: Cura vida ao atacar."},
     "Ogro": {"str": 12, "int": 3, "def": 6, "hp": 70, "spd": 2, "crit": 5, "desc": "🪨 Pele de Pedra: Reduz dano fixo."},
     "Necromante": {"str": 4, "int": 11, "def": 5, "hp": 35, "spd": 5, "crit": 7, "desc": "💀 Segunda Chance: Chance de sobreviver à morte."},
-    "Assassino": {"str": 7, "int": 5, "def": 11, "hp": 40, "spd": 10, "crit": 15, "desc": "⚔️ Ataque Duplo: Chance de atacar 2x."},
+    "Assassino": {"str": 7, "int": 5, "def": 11, "hp": 40, "spd": 10, "crit": 15, "desc": "⚔️ Consome o foco do inimigo."},
     "Feiticeiro": {"str": 6, "int": 9, "def": 8, "hp": 50, "spd": 5, "crit": 6, "desc": "🐍 Maldição: Inimigo pode errar o ataque."},
 }
 
-# --- Funções Auxiliares (Mantidas) ---
+# Lista rígida das classes válidas para o sorteio
+VALID_CLASSES = list(BASE_STATS.keys())
+
+# --- Funções Auxiliares ---
 def get_db(): return SessionLocal()
 def get_player(user_id, db): return db.query(Player).filter(Player.id == user_id).first()
 def format_number(num): return str(int(num))
@@ -108,7 +111,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except ValueError: pass 
 
     if not player:
-        # --- CORREÇÃO: Inicializa kb e row ANTES do loop ---
+        
+        # 1. GERA O RESUMO DE ATRIBUTOS
+        class_summary = "📊 **ATRIBUTOS INICIAIS**\n"
+        for name, data in BASE_STATS.items():
+            desc = data.get('desc', 'Nenhuma descrição disponível.')
+            summary = (
+                f"\n**{name}**: {desc}\n"
+                f"   ❤️ {data['hp']} | 💪 {data['str']} STR | 🧠 {data['int']} INT | 🛡️ {data['def']} DEF"
+            )
+            class_summary += summary
+
+        # 2. MENSAGEM PRINCIPAL
+        msg = (
+            "✨ **A Névoa se Dissipa!** ✨\n\n"
+            "Viajante, o destino final dos Reinos de Aerthos repousa em sua escolha. "
+            "Os campos de **Idle War** aguardam o clamor de uma nova lenda.\n"
+            f"\n{class_summary}\n"
+            "\nQual poder ancestral você irá empunhar?"
+        )
+
+        # 3. GERA OS BOTÕES
         kb = []
         row = []
         classes = list(BASE_STATS.keys()) + ['Aleatorio']
@@ -117,11 +140,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             label = f"{c} 🎲" if c == 'Aleatorio' else c
             row.append(InlineKeyboardButton(label, callback_data=f'class_{c}'))
             if len(row) == 3: kb.append(row); row = []
-        
-        msg = f"Bem-vindo ao Idle War! Escolha sua classe:"
-        if context.user_data.get('referrer_id'):
-            referrer_player = get_player(context.user_data['referrer_id'], db)
-            if referrer_player: msg += f"\n\nIndicação de **{referrer_player.name}** detectada! Ambos receberão bônus!"
 
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     else:
@@ -164,7 +182,26 @@ async def show_main_menu(update: Update, player: Player):
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
 
-# --- RECEBIMENTO DE TEXTO ---
+# --- HANDLER: SELEÇÃO DE CLASSE (COM CORREÇÃO DE SORTEIO) ---
+async def handle_class_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    class_choice = query.data.split('_')[1]
+    
+    if class_choice == 'Aleatorio':
+        # FIX: Sorteia de uma lista rígida e conhecida
+        class_choice = random.choice(VALID_CLASSES) 
+        
+    context.user_data['temp_class'] = class_choice
+    context.user_data['waiting_name'] = True
+    
+    desc = BASE_STATS[class_choice].get('desc', 'Nenhuma descrição disponível.')
+    await query.edit_message_text(
+        f"Classe **{class_choice}** selecionada!\n_{desc}_\n\nDigite o NOME do personagem (Máx 15 letras, sem espaços):",
+        parse_mode='Markdown'
+    )
+
+# --- RECEBIMENTO DE TEXTO & CONFIRMAÇÃO (Mantidos) ---
 async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_data = context.user_data
     
@@ -214,8 +251,8 @@ async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         db.close()
 
 
-# --- CONFIRMAÇÃO DE NOME ---
 async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Lógica de confirmação de nome e recompensa de afiliado (Mantida)
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -265,6 +302,7 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # --- HANDLER GERAL DE MENUS ---
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Lógica de menus (Mantida)
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -315,9 +353,8 @@ def main_bot(token: str) -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cheat", admin_cheat))
     
-    # Mensagens e Callbacks
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text_input))
     app.add_handler(CallbackQueryHandler(confirm_name_handler, pattern='^confirm_name_'))
-    app.add_handler(CallbackQueryHandler(handle_menu))
+    app.add_handler(CallbackQueryHandler(handle_menu)) # Este handler trata TODOS os callbacks (menu_info, menu_mailbox, etc.)
 
     return app
