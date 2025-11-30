@@ -1,0 +1,5 @@
+python-telegram-bot[job-queue]
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
