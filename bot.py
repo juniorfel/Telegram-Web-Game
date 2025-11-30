@@ -167,31 +167,18 @@ async def daily_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"Seu poder aumentou! Use /status para ver seus novos atributos."
     )
 
-# --- Função Principal do Bot ---
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a message to the user."""
     logger.error("Exception while handling an update:", exc_info=context.error)
     
     # Opcional: Enviar uma mensagem de erro amigável ao usuário
-    if update.effective_message:
+    # Verificamos se update existe, pois em alguns erros ele pode ser None
+    if update and update.effective_message:
         await update.effective_message.reply_text(
             "Desculpe, ocorreu um erro interno ao processar seu comando. Tente novamente mais tarde."
         )
-def main_bot(token: str) -> Application:
-    # ... (código existente)
 
-    # Handlers de Comandos
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("status", status))
-    application.add_handler(CommandHandler("daily", daily_claim))
-    
-    # Handler de Callback (para seleção de classe)
-    application.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
-
-    # --- Adicionar o Handler de Erro ---
-    application.add_handler(ErrorHandler(error_handler))
-
-    return application
+# --- Função Principal do Bot ---
 
 def main_bot(token: str) -> Application:
     """Configura e retorna a aplicação do bot."""
@@ -207,5 +194,8 @@ def main_bot(token: str) -> Application:
     
     # Handler de Callback (para seleção de classe)
     application.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
+
+    # Handler de Erro
+    application.add_error_handler(error_handler)
 
     return application
