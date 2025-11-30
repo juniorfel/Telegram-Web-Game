@@ -10,6 +10,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # Se o token não estiver definido, o bot não pode rodar
 if not BOT_TOKEN:
+    # Em um ambiente de produção como o Render, isso irá falhar o deploy, o que é o desejado.
     raise ValueError("A variável de ambiente BOT_TOKEN não está definida.")
 
 # O caminho do webhook deve incluir o token para segurança
@@ -24,6 +25,7 @@ app = FastAPI()
 @app.on_event("startup")
 async def startup_event():
     """Configura o webhook ao iniciar o servidor."""
+    # O URL base será fornecido pelo Render (ou outro serviço de hospedagem)
     print("Aplicação FastAPI iniciada. Webhook configurado para o caminho:", WEBHOOK_URL_PATH)
 
 @app.post(WEBHOOK_URL_PATH)
@@ -36,13 +38,14 @@ async def telegram_webhook(request: Request):
         # Cria um objeto Update do telegram-bot-python
         update = Update.de_json(update_json, application.bot)
         
-        # Coloca a atualização na fila de processamento do PTB (Correção para o erro 500)
-        await application.update_queue.put(update)
+        # Processa a atualização de forma síncrona no contexto assíncrono
+        # Isso garante que a resposta seja enviada antes do 200 OK
+        await application.process_update(update)
         
         return Response(status_code=200)
     except Exception as e:
         print(f"Erro ao processar atualização: {e}")
-        # Retorna 200 OK mesmo em caso de erro para evitar que o Telegram reenvie a mensagem
+        # Retorna 200 OK para evitar que o Telegram reenvie a mensagem
         return Response(status_code=200) 
 
 @app.get("/")
