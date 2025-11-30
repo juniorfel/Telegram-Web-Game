@@ -141,18 +141,14 @@ def seed_bots(db):
     print("Bots lendários criados!")
 
 def init_db():
-    print("⚠️ RESETANDO BANCO DE DADOS (CLEAN INSTALL)...")
-    
-    # --- COMANDO DE RESET: Apaga tudo e recria ---
-    Base.metadata.drop_all(bind=engine) 
+    # Cria tabelas se não existirem
     Base.metadata.create_all(bind=engine)
-    # ---------------------------------------------
-
+    
     db = SessionLocal()
     seed_bots(db)
     db.close()
     
-    print("✅ Banco de Dados Resetado e Atualizado!")
+    print("✅ Banco de Dados Carregado!")
 
 def get_db():
     db = SessionLocal()
