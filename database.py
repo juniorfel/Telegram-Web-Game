@@ -113,26 +113,17 @@ def seed_bots(db):
     print("Bots criados com sucesso!")
 
 def init_db():
-    """Inicializa o Banco de Dados"""
-    
-    # ---------------------------------------------------------
-    # ⚠️ ÁREA DE RESET (Use apenas para corrigir o esquema)
-    # Como você adicionou colunas novas (farm, guild link), 
-    # precisamos apagar as tabelas antigas.
-    # ---------------------------------------------------------
-    print("♻️ RESETANDO TABELAS DO BANCO DE DADOS...")
-    Base.metadata.drop_all(bind=engine) 
-    # ---------------------------------------------------------
-
-    # Cria as tabelas novas (Corretas)
+    """Inicializa o Banco de Dados (Modo Seguro)"""
+    # Cria as tabelas se não existirem (não apaga nada)
     Base.metadata.create_all(bind=engine)
     
-    # Cria os bots novamente
+    # Cria os bots se necessário
     db = SessionLocal()
     seed_bots(db)
     db.close()
     
-    print("✅ Banco de Dados Atualizado e Pronto!")
+    print("✅ Banco de Dados Carregado!")
+
 
 def get_db():
     db = SessionLocal()
