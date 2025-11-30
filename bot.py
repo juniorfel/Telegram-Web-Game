@@ -77,11 +77,46 @@ def apply_passive_healing(player: Player, db):
     if player.health == player.max_health: player.last_stamina_gain = now 
     return 0
 
-# --- COMANDO ADMIN ---
+# --- COMANDOS ADMIN ---
+def is_admin(user_id): return user_id == ADMIN_ID
+
+async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    try:
+        target_id = int(context.args[0])
+        db = get_db(); target = get_player(target_id, db)
+        if target: target.is_banned = True; db.commit(); await update.message.reply_text(f"🚫 {target.name} BANIDO.")
+        else: await update.message.reply_text("Não encontrado.")
+        db.close()
+    except: await update.message.reply_text("Uso: /banir [ID]")
+
+async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    try:
+        target_id = int(context.args[0])
+        db = get_db(); target = get_player(target_id, db)
+        if target: db.delete(target); db.commit(); await update.message.reply_text(f"🗑️ Conta {target_id} deletada.")
+        else: await update.message.reply_text("Não encontrado.")
+        db.close()
+    except: await update.message.reply_text("Uso: /conta [ID]")
+
+async def admin_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    try:
+        cmd = update.message.text.split()[0].replace('/', '')
+        tid = int(context.args[0]); amt = int(context.args[1])
+        db = get_db(); t = get_player(tid, db)
+        if t:
+            if cmd == 'ouro': t.gold += amt
+            elif cmd == 'gemas': t.gems += amt
+            elif cmd == 'xp': t.xp += amt; check_level_up(t)
+            db.commit(); await update.message.reply_text(f"✅ {amt} {cmd} para {t.name}.")
+        db.close()
+    except: await update.message.reply_text(f"Uso: /{cmd} [ID] [QTD]")
+
 async def admin_cheat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user.id != ADMIN_ID: return
-    db = get_db()
-    p = get_player(update.effective_user.id, db)
+    if not is_admin(update.effective_user.id): return
+    db = get_db(); p = get_player(update.effective_user.id, db)
     if p:
         p.gold += 50000; p.gems += 500; p.level = 50; p.stamina = p.max_stamina
         db.commit()
@@ -94,6 +129,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_db()
     player = get_player(user.id, db)
 
+    # Ban check
+    if player and player.is_banned:
+        await update.message.reply_text("🚫 Conta Banida."); db.close(); return
+
     if context.args and not player:
         try:
             rid = int(context.args[0])
@@ -101,14 +140,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except ValueError: pass 
 
     if not player:
-        # Texto Mágico de Boas Vindas
         summary = ""
         for name, data in BASE_STATS.items():
             summary += f"\n**{name}**: {data['desc']}\n   ❤️ {data['hp']} | 💪 {data['str']} | 🧠 {data['int']} | 🛡️ {data['def']}"
 
         msg = (f"✨ **A Névoa se Dissipa!** ✨\n\n"
                f"Viajante, o destino dos Reinos de Aerthos aguarda sua escolha.\n\n"
-               f"💰 **Recursos:**\n{INITIAL_GOLD} Ouro\n0 Gemas\n\n"
+               f"💰 **Recursos Iniciais:**\n{INITIAL_GOLD} Ouro\n0 Gemas\n\n"
                f"Qual poder ancestral você irá empunhar?\n{summary}")
 
         kb = []; row = []
@@ -126,8 +164,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db.close()
 
 async def show_main_menu(update: Update, player: Player):
-    # DEFINIÇÃO DO TECLADO DO MENU PRINCIPAL (CORRIGIDO)
-    keyboard = [
+    kb = [
         [InlineKeyboardButton("Info/Perfil ❓", callback_data='menu_info'),
          InlineKeyboardButton("Batalhar ⚔️", callback_data='menu_battle_mode'),
          InlineKeyboardButton("Diário 🎁", callback_data='menu_daily')],
@@ -147,10 +184,12 @@ async def show_main_menu(update: Update, player: Player):
             f"⚡ Stamina: {player.stamina}/{player.max_stamina}\n"
             f"💰 {format_number(player.gold)} | 💎 {player.gems}")
     
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    else:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    try:
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    except: pass
 
 # --- REGISTRO E TEXTO ---
 async def handle_class_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -159,7 +198,7 @@ async def handle_class_selection(update: Update, context: ContextTypes.DEFAULT_T
     if c == 'Aleatorio': c = random.choice(VALID_CLASSES)
     context.user_data['temp_class'] = c
     context.user_data['waiting_name'] = True
-    await query.edit_message_text(f"Classe **{c}** escolhida! 🔮\n\nAgora, diga-me: **Qual é o seu nome, herói?** (Máx 15 letras)", parse_mode='Markdown')
+    await query.edit_message_text(f"Classe **{c}** escolhida! 🔮\n\nAgora, diga-me: **Qual é o seu nome, herói?** (Mín 5 letras, sem espaços)", parse_mode='Markdown')
 
 async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ud = context.user_data
@@ -179,16 +218,16 @@ async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if ud.get('waiting_name'):
         clean = update.message.text.strip().replace(" ", "")[:15]
-        if len(clean) < 3: await update.message.reply_text("Mínimo 3 letras."); return
+        if len(clean) < 5: await update.message.reply_text("⚠️ Nome muito curto! Mínimo **5 letras**."); return
         ud['temp_name'] = clean; ud['waiting_name'] = False
         kb = [[InlineKeyboardButton("✅ Confirmar", callback_data='confirm_name_yes'), InlineKeyboardButton("✏️ Alterar", callback_data='confirm_name_no')]]
-        await update.message.reply_text(f"Nome: **{clean}**\nConfirma?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await update.message.reply_text(f"Seu nome será: **{clean}**\nConfirma?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         return
 
     if ud.get('waiting_guild_name'):
         ud['temp_guild_name'] = update.message.text.strip().replace(" ", "")[:15]
         ud['waiting_guild_name'] = False; ud['waiting_guild_link'] = True
-        await update.message.reply_text(f"Nome: **{ud['temp_guild_name']}**\n\nEnvie o **Link do Grupo Telegram**:", parse_mode='Markdown')
+        await update.message.reply_text(f"Nome da Guilda: **{ud['temp_guild_name']}**\n\nEnvie o **Link do Grupo Telegram**:", parse_mode='Markdown')
         return
 
     if ud.get('waiting_guild_link'):
@@ -215,7 +254,7 @@ async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 g = db.query(Guild).filter(Guild.id == p.guild_id).first()
                 if dtype == 'gold' and p.gold >= amt: p.gold -= amt; g.treasury_gold += amt; await update.message.reply_text(f"💰 Doou **{amt}g**!")
                 elif dtype == 'gems' and p.gems >= amt: p.gems -= amt; g.treasury_gems += amt; await update.message.reply_text(f"💎 Doou **{amt} gems**!")
-                else: await update.message.reply_text("🚫 Sem fundos.")
+                else: await update.message.reply_text("🚫 **Recursos insuficientes!**")
                 db.commit()
             except: await update.message.reply_text("Valor inválido.")
         ud['waiting_donation_type'] = None; db.close()
@@ -227,32 +266,60 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("Digite o nome novamente:")
         return
 
-    ud = context.user_data; db = get_db(); s = BASE_STATS[ud['temp_class']]
-    p = Player(id=update.effective_user.id, name=ud['temp_name'], class_name=ud['temp_class'],
+    # BLINDAGEM: Verifica se sessão existe
+    name = context.user_data.get('temp_name')
+    c_class = context.user_data.get('temp_class')
+    
+    if not name or not c_class:
+        await query.edit_message_text("⚠️ **Sessão expirada.** Digite /start.", parse_mode='Markdown')
+        return
+
+    user_id = update.effective_user.id
+    db = get_db()
+    
+    # BLINDAGEM: Verifica duplicidade no DB
+    if get_player(user_id, db):
+        db.close()
+        await query.edit_message_text("⚠️ Você já tem um personagem! Redirecionando...")
+        player = get_player(user_id, get_db()) # Reabre sessão
+        await show_main_menu(update, player)
+        get_db().close()
+        return
+
+    s = BASE_STATS[c_class]
+    p = Player(id=user_id, username=update.effective_user.username, name=name, class_name=c_class,
                health=s['hp'], max_health=s['hp'], strength=s['str'], intelligence=s['int'], defense=s['def'],
                speed=s['spd'], crit_chance=s['crit'], gold=INITIAL_GOLD)
     db.add(p); db.commit()
     
+    # Afiliado
     msg = ""
-    rid = ud.get('referrer_id')
+    rid = context.user_data.get('referrer_id')
     if rid:
         ref = get_player(rid, db)
         if ref:
             ref.gems += REFERRAL_GEMS_INVITER; ref.gold += REFERRAL_GOLD_INVITER
             p.gems += REFERRAL_GEMS_NEW; p.gold += REFERRAL_GOLD_NEW; db.commit()
             msg = f"\n\n🎁 **BÔNUS AFILIADO!**"
-            try:
-                await context.bot.send_message(chat_id=ref.id, text=f"🤝 **Novo Aliado!**\nUma nova pessoa entrou graças a você!\nVocê ganhou {REFERRAL_GEMS_INVITER}💎 e {REFERRAL_GOLD_INVITER}💰.")
+            try: await context.bot.send_message(chat_id=ref.id, text=f"🤝 **Novo Aliado!**\nAlguém entrou pelo seu link!\nVocê ganhou {REFERRAL_GEMS_INVITER}💎 e {REFERRAL_GOLD_INVITER}💰.")
             except: pass
     
-    db.close(); ud['waiting_name'] = False
-    await query.edit_message_text(f"🎉 **Lenda Criada!**\nBem-vindo, {p.name}!{msg}\nUse /start.", parse_mode='Markdown')
+    # SUCESSO: Carrega Menu Automaticamente
+    await query.answer(f"🎉 Bem-vindo, {p.name}!", show_alert=True)
+    await show_main_menu(update, p) # <--- AQUI ESTÁ O AUTO-START
+    
+    db.close()
+    context.user_data['waiting_name'] = False
 
 # --- HANDLER GERAL ---
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     data = query.data; db = get_db()
     player = get_player(query.from_user.id, db)
+    
+    if player and player.is_banned:
+        await query.edit_message_text("🚫 **Conta Banida.**"); db.close(); return
+        
     if not player: return
 
     # --- BATALHA (PAINEL TÁTICO) ---
@@ -280,16 +347,16 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'confirm_pve':
-        if player.stamina < STAMINA_COST: await query.answer("⚡ Exausto! Descanse.", show_alert=True); return
+        if player.stamina < STAMINA_COST: await query.answer("⚡ Exausto! Seus heróis precisam descansar.", show_alert=True); return
         player.stamina -= STAMINA_COST
         m = context.user_data.get('monster')
         win = random.random() < 0.6
         if win:
             player.gold += m['gold']; player.xp += m['xp']; player.current_phase_id += 1; check_level_up(player)
-            msg = f"⚔️ **Vitória Gloriosa!**\nO inimigo caiu.\nSaque: +{m['gold']}g | +{m['xp']}xp"
+            msg = f"⚔️ **Vitória Gloriosa!**\nO inimigo caiu perante sua força.\nSaque: +{m['gold']}g | +{m['xp']}xp"
         else:
             dmg = 10; player.health = max(0, player.health - dmg)
-            msg = f"☠️ **Derrota...**\nVocê perdeu {dmg} HP."
+            msg = f"☠️ **Derrota...**\nVocê foi superado e perdeu {dmg} HP."
         db.commit()
         kb = [[InlineKeyboardButton("Continuar", callback_data='menu_battle_mode')]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
@@ -504,6 +571,11 @@ def main_bot(token: str) -> Application:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cheat", admin_cheat))
+    app.add_handler(CommandHandler("banir", admin_ban))
+    app.add_handler(CommandHandler("conta", admin_delete))
+    app.add_handler(CommandHandler("ouro", admin_give))
+    app.add_handler(CommandHandler("gemas", admin_give))
+    app.add_handler(CommandHandler("xp", admin_give))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text_input))
     app.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
     app.add_handler(CallbackQueryHandler(confirm_name_handler, pattern='^confirm_name_'))
