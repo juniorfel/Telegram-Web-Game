@@ -77,46 +77,110 @@ def apply_passive_healing(player: Player, db):
     if player.health == player.max_health: player.last_stamina_gain = now 
     return 0
 
-# --- COMANDOS ADMIN ---
-def is_admin(user_id): return user_id == ADMIN_ID
+def simulate_pvp_battle(attacker: Player, defender: Player):
+    hp_atk = attacker.health; hp_def = defender.health
+    atk_turn = attacker.speed >= defender.speed
+    max_turns = 20
+    
+    for _ in range(max_turns):
+        if hp_atk <= 0 or hp_def <= 0: break
+        act = attacker if atk_turn else defender
+        pas = defender if atk_turn else attacker
+        
+        dodge = max(0, (pas.speed - act.speed) * 2)
+        if random.randint(1, 100) <= dodge:
+            atk_turn = not atk_turn; continue
+
+        dmg = (act.strength * 2) + act.intelligence
+        if random.randint(1, 100) <= act.crit_chance: dmg *= 2
+            
+        reduction = pas.defense / (pas.defense + 100)
+        dmg_final = int(dmg * (1 - reduction))
+        
+        if pas == attacker: hp_atk -= dmg_final
+        else: hp_def -= dmg_final
+        atk_turn = not atk_turn
+
+    return attacker if hp_atk > 0 else defender
+
+# --- ADMIN SYSTEM ---
+def is_admin(user_id, db=None):
+    if user_id == ADMIN_ID: return True
+    if db:
+        p = get_player(user_id, db)
+        if p and p.is_admin: return True
+    return False
+
+async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = get_db()
+    if not is_admin(update.effective_user.id, db): db.close(); return
+    msg = ("👑 **COMANDOS GM**\n"
+           "/banir [ID]\n/conta [ID] (Delete)\n"
+           "/ouro [ID] [QTD]\n/gemas [ID] [QTD]\n/xp [ID] [QTD]\n"
+           "/promote [ID]\n/demote [ID]")
+    db.close()
+    await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
+    db = get_db()
+    if not is_admin(update.effective_user.id, db): db.close(); return
     try:
         target_id = int(context.args[0])
-        db = get_db(); target = get_player(target_id, db)
+        target = get_player(target_id, db)
         if target: target.is_banned = True; db.commit(); await update.message.reply_text(f"🚫 {target.name} BANIDO.")
         else: await update.message.reply_text("Não encontrado.")
-        db.close()
     except: await update.message.reply_text("Uso: /banir [ID]")
+    db.close()
 
 async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
+    db = get_db()
+    if not is_admin(update.effective_user.id, db): db.close(); return
     try:
         target_id = int(context.args[0])
-        db = get_db(); target = get_player(target_id, db)
-        if target: db.delete(target); db.commit(); await update.message.reply_text(f"🗑️ Conta {target_id} deletada.")
+        target = get_player(target_id, db)
+        if target: db.delete(target); db.commit(); await update.message.reply_text(f"🗑️ Conta {target_id} DELETADA.")
         else: await update.message.reply_text("Não encontrado.")
-        db.close()
     except: await update.message.reply_text("Uso: /conta [ID]")
+    db.close()
 
 async def admin_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id): return
+    db = get_db()
+    if not is_admin(update.effective_user.id, db): db.close(); return
     try:
         cmd = update.message.text.split()[0].replace('/', '')
         tid = int(context.args[0]); amt = int(context.args[1])
-        db = get_db(); t = get_player(tid, db)
+        t = get_player(tid, db)
         if t:
             if cmd == 'ouro': t.gold += amt
             elif cmd == 'gemas': t.gems += amt
             elif cmd == 'xp': t.xp += amt; check_level_up(t)
             db.commit(); await update.message.reply_text(f"✅ {amt} {cmd} para {t.name}.")
-        db.close()
+        else: await update.message.reply_text("Não encontrado.")
     except: await update.message.reply_text(f"Uso: /{cmd} [ID] [QTD]")
+    db.close()
+
+async def admin_promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        tid = int(context.args[0])
+        db = get_db(); t = get_player(tid, db)
+        if t: t.is_admin = True; db.commit(); await update.message.reply_text(f"👑 {t.name} agora é Admin!")
+        db.close()
+    except: await update.message.reply_text("Uso: /promote [ID]")
+
+async def admin_demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        tid = int(context.args[0])
+        db = get_db(); t = get_player(tid, db)
+        if t: t.is_admin = False; db.commit(); await update.message.reply_text(f"👇 {t.name} removido de Admin.")
+        db.close()
+    except: await update.message.reply_text("Uso: /demote [ID]")
 
 async def admin_cheat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_admin(update.effective_user.id): return
-    db = get_db(); p = get_player(update.effective_user.id, db)
+    db = get_db()
+    if not is_admin(update.effective_user.id, db): db.close(); return
+    p = get_player(update.effective_user.id, db)
     if p:
         p.gold += 50000; p.gems += 500; p.level = 50; p.stamina = p.max_stamina
         db.commit()
@@ -129,7 +193,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_db()
     player = get_player(user.id, db)
 
-    # Ban check
     if player and player.is_banned:
         await update.message.reply_text("🚫 Conta Banida."); db.close(); return
 
@@ -159,6 +222,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         heal = apply_passive_healing(player, db)
         db.commit()
+        
+        if is_admin(user.id, db):
+            await update.message.reply_text("👑 **Admin:** Digite /admin para comandos.", parse_mode='Markdown')
+            
         await show_main_menu(update, player)
         if heal > 0: await context.bot.send_message(chat_id=user.id, text=f"✨ Clínica: **+{heal} HP** recuperados.", parse_mode='Markdown')
     db.close()
@@ -266,7 +333,6 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("Digite o nome novamente:")
         return
 
-    # BLINDAGEM: Verifica se sessão existe
     name = context.user_data.get('temp_name')
     c_class = context.user_data.get('temp_class')
     
@@ -277,11 +343,10 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     db = get_db()
     
-    # BLINDAGEM: Verifica duplicidade no DB
     if get_player(user_id, db):
         db.close()
         await query.edit_message_text("⚠️ Você já tem um personagem! Redirecionando...")
-        player = get_player(user_id, get_db()) # Reabre sessão
+        player = get_player(user_id, get_db())
         await show_main_menu(update, player)
         get_db().close()
         return
@@ -292,24 +357,23 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                speed=s['spd'], crit_chance=s['crit'], gold=INITIAL_GOLD)
     db.add(p); db.commit()
     
-    # Afiliado
     msg = ""
     rid = context.user_data.get('referrer_id')
     if rid:
         ref = get_player(rid, db)
         if ref:
             ref.gems += REFERRAL_GEMS_INVITER; ref.gold += REFERRAL_GOLD_INVITER
-            p.gems += REFERRAL_GEMS_NEW; p.gold += REFERRAL_GOLD_NEW; db.commit()
+            p.gems += REFERRAL_GEMS_NEW; p.gold += REFERRAL_GOLD_NEW
+            # Incrementa contador de afiliados
+            ref.referral_count += 1 
+            db.commit()
             msg = f"\n\n🎁 **BÔNUS AFILIADO!**"
-            try: await context.bot.send_message(chat_id=ref.id, text=f"🤝 **Novo Aliado!**\nAlguém entrou pelo seu link!\nVocê ganhou {REFERRAL_GEMS_INVITER}💎 e {REFERRAL_GOLD_INVITER}💰.")
+            try: await context.bot.send_message(chat_id=ref.id, text=f"🤝 **Novo Aliado!**\nUma nova pessoa entrou graças a você!\nVocê ganhou {REFERRAL_GEMS_INVITER}💎 e {REFERRAL_GOLD_INVITER}💰.")
             except: pass
     
-    # SUCESSO: Carrega Menu Automaticamente
     await query.answer(f"🎉 Bem-vindo, {p.name}!", show_alert=True)
-    await show_main_menu(update, p) # <--- AQUI ESTÁ O AUTO-START
-    
-    db.close()
-    context.user_data['waiting_name'] = False
+    await show_main_menu(update, p)
+    db.close(); context.user_data['waiting_name'] = False
 
 # --- HANDLER GERAL ---
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -376,12 +440,16 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if player.stamina < STAMINA_COST: await query.answer("⚡ Exausto!", show_alert=True); return
         opp = db.query(Player).filter(Player.id == context.user_data.get('opponent_id')).first()
         player.stamina -= STAMINA_COST
-        my_pow = player.strength + player.defense
-        opp_pow = opp.strength + opp.defense
-        if my_pow > opp_pow:
-            player.pvp_rating += 25; msg = f"🏆 **Vitória na Arena!**\nVocê derrotou {opp.name}."
+        
+        # Simulação PVP
+        winner = simulate_pvp_battle(player, opp)
+        
+        if winner.id == player.id:
+            player.pvp_rating += 25; msg = f"🏆 **Vitória Épica!**\nSua estratégia superou {opp.name}.\n+25 Rating"
         else:
-            player.pvp_rating = max(0, player.pvp_rating - 15); msg = "🏳️ **Derrota Humilhante...**\nTreine mais."
+            player.pvp_rating = max(0, player.pvp_rating - 15); player.health = max(0, player.health - 20)
+            msg = f"🏳️ **Derrota...**\n{opp.name} foi mais rápido e forte.\n-15 Rating"
+            
         db.commit()
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Continuar", callback_data='menu_battle_mode')]]), parse_mode='Markdown')
 
@@ -576,6 +644,9 @@ def main_bot(token: str) -> Application:
     app.add_handler(CommandHandler("ouro", admin_give))
     app.add_handler(CommandHandler("gemas", admin_give))
     app.add_handler(CommandHandler("xp", admin_give))
+    app.add_handler(CommandHandler("admin", admin_help))
+    app.add_handler(CommandHandler("promote", admin_promote))
+    app.add_handler(CommandHandler("demote", admin_demote))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text_input))
     app.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
     app.add_handler(CallbackQueryHandler(confirm_name_handler, pattern='^confirm_name_'))
