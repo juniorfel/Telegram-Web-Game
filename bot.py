@@ -116,7 +116,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for c in classes:
             label = f"{c} 🎲" if c == 'Aleatorio' else c
             row.append(InlineKeyboardButton(label, callback_data=f'class_{c}'))
-            if len(row) == 3: kb.append(row); row = [] # <--- A correção foi aqui
+            if len(row) == 3: kb.append(row); row = [] # <--- A correção de escopo está aqui
         
         msg = f"Bem-vindo ao Idle War! Escolha sua classe:"
         if context.user_data.get('referrer_id'):
@@ -125,6 +125,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     else:
+        # Aplica a cura passiva antes de mostrar o menu
         heal_amount = apply_passive_healing(player, db)
         db.commit()
         
@@ -214,6 +215,55 @@ async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         db.close()
 
 
+# --- CONFIRMAÇÃO DE NOME ---
+async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == 'confirm_name_no':
+        context.user_data['waiting_name'] = True
+        await query.edit_message_text("Ok! Digite o nome novamente:")
+        return
+
+    if data == 'confirm_name_yes':
+        name = context.user_data['temp_name']
+        char_class = context.user_data['temp_class']
+        user = update.effective_user
+        
+        db = get_db()
+        stats = BASE_STATS[char_class]
+        
+        new_player = Player(
+            id=user.id, username=user.username, name=name, class_name=char_class,
+            health=stats['hp'], max_health=stats['hp'], strength=stats['str'], intelligence=stats['int'], defense=stats['def'],
+            speed=stats['spd'], crit_chance=stats['crit'], gold=INITIAL_GOLD
+        )
+        db.add(new_player)
+        db.commit()
+        
+        referral_msg = ""
+        referrer_id = context.user_data.get('referrer_id')
+        if referrer_id:
+            referrer = get_player(referrer_id, db)
+            if referrer:
+                referrer.gems += REFERRAL_GEMS_INVITER
+                referrer.gold += REFERRAL_GOLD_INVITER
+                new_player.gems += REFERRAL_GEMS_NEW
+                new_player.gold += REFERRAL_GOLD_NEW
+                db.commit()
+                referral_msg = f"\n\n🎁 **BÔNUS AFILIADO!**\nVocê ganhou {REFERRAL_GEMS_NEW}💎 e {REFERRAL_GOLD_NEW}💰."
+                logger.info(f"Afiliado: {user.id} registrado. {referrer_id} recebeu recompensas.")
+
+        db.close()
+        
+        context.user_data['waiting_name'] = False
+        await query.edit_message_text(
+            f"Personagem **{name}** criado!{referral_msg}\nUse /start.",
+            parse_mode='Markdown'
+        )
+
+
 # --- HANDLER GERAL DE MENUS ---
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -267,6 +317,8 @@ def main_bot(token: str) -> Application:
     app.add_handler(CommandHandler("cheat", admin_cheat))
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text_input))
+    app.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
+    app.add_handler(CallbackQueryHandler(confirm_name_handler, pattern='^confirm_name_'))
     app.add_handler(CallbackQueryHandler(handle_menu))
 
     return app
