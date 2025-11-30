@@ -210,13 +210,13 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player = get_player(query.from_user.id, db)
     if not player: return
 
-    # --- LOJA VIP ---
+# --- LOJA VIP ---
     if data == 'menu_shop':
         kb = [[InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
         await query.edit_message_text(
             "💎 **LOJA VIP**\n\n"
             "🚧 Esta área está em desenvolvimento.\n"
-            "Em breve você poderá adquirir Gemas e Pacotes Especiais através da integração com **XSolla**.",
+            "Em breve você poderá adquirir Gemas e Pacotes Especiais para evoluir no jogo.", 
             reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown'
         )
 
