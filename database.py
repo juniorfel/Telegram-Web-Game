@@ -1,11 +1,13 @@
 import os
 import random
-from sqlalchemy import create_engine, Column, Integer, String, BigInteger, DateTime, ForeignKey, text
+from sqlalchemy import create_engine, Column, Integer, String, BigInteger, DateTime, ForeignKey
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 
-# --- Configuração de Conexão ---
+# --- Configuração de Conexão (Compatível com Render) ---
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///idle_war.db")
+
+# Correção obrigatória para o Render (postgres:// -> postgresql://)
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -17,12 +19,13 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Player(Base):
     __tablename__ = "players"
-    id = Column(BigInteger, primary_key=True, index=True)
+
+    id = Column(BigInteger, primary_key=True, index=True) # ID do Telegram
     username = Column(String(50), nullable=True)
-    name = Column(String(15))
+    name = Column(String(15)) # Limite 15 chars
     class_name = Column(String(20))
     
-    # Progresso
+    # Progresso Principal
     level = Column(Integer, default=1)
     xp = Column(Integer, default=0)
     gold = Column(Integer, default=1000)
@@ -35,85 +38,105 @@ class Player(Base):
     strength = Column(Integer)
     intelligence = Column(Integer)
     defense = Column(Integer)
-    speed = Column(Integer, default=5)
-    crit_chance = Column(Integer, default=5)
+    speed = Column(Integer, default=5)      # Velocidade/Iniciativa
+    crit_chance = Column(Integer, default=5) # Chance Crítica (%)
+    
+    # Recursos de Energia
     stamina = Column(Integer, default=5)
     max_stamina = Column(Integer, default=5)
     
-    # Social
+    # Social (Guilda e PvP)
     pvp_rating = Column(Integer, default=1000)
     guild_id = Column(Integer, ForeignKey("guilds.id"), nullable=True)
     
-    # Fazenda
-    farm_level = Column(Integer, default=1)
-    barn_level = Column(Integer, default=1)
-    last_farm_harvest = Column(DateTime, default=datetime.now)
+    # Sistema de Fazenda (Novos Campos)
+    farm_level = Column(Integer, default=1)      # Nível da Plantação
+    barn_level = Column(Integer, default=1)      # Nível do Celeiro
+    last_farm_harvest = Column(DateTime, default=datetime.now) # Última colheita
 
-    # Timestamps
+    # Timestamps para Cooldowns
     last_daily_claim = Column(DateTime, default=datetime.min)
     last_stamina_gain = Column(DateTime, default=datetime.min)
 
 class Guild(Base):
     __tablename__ = "guilds"
+    
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), unique=True)
-    telegram_link = Column(String(100))
+    telegram_link = Column(String(100)) # Link do Grupo Telegram
     leader_id = Column(BigInteger)
     total_rating = Column(Integer, default=0)
     member_count = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.now)
 
-# --- Funções de Migração e Seeding ---
-
-def migrate_db():
-    """Função de Auto-Correção: Adiciona colunas que faltam sem apagar dados."""
-    print("Verificando estrutura do banco de dados...")
-    with engine.connect() as conn:
-        try:
-            # Adiciona colunas da FAZENDA se não existirem
-            conn.execute(text("ALTER TABLE players ADD COLUMN IF NOT EXISTS farm_level INTEGER DEFAULT 1;"))
-            conn.execute(text("ALTER TABLE players ADD COLUMN IF NOT EXISTS barn_level INTEGER DEFAULT 1;"))
-            conn.execute(text("ALTER TABLE players ADD COLUMN IF NOT EXISTS last_farm_harvest TIMESTAMP;"))
-            
-            # Adiciona colunas da GUILDA se não existirem
-            conn.execute(text("ALTER TABLE guilds ADD COLUMN IF NOT EXISTS telegram_link VARCHAR(100);"))
-            conn.execute(text("ALTER TABLE guilds ADD COLUMN IF NOT EXISTS member_count INTEGER DEFAULT 1;"))
-            
-            conn.commit()
-            print("Migração de banco de dados concluída com sucesso.")
-        except Exception as e:
-            print(f"Aviso na migração (pode ser ignorado se as colunas já existirem): {e}")
+# --- Funções de Inicialização e Bots ---
 
 def seed_bots(db):
-    if db.query(Player).count() > 10: return
-    print("Criando bots...")
+    """Cria 200 bots se o banco estiver vazio para popular o Ranking"""
+    if db.query(Player).count() > 10:
+        return # Já existem jogadores, não cria bots
+
+    print("Populando Ranking com 200 Bots...")
+    
     prefixes = ["Dark", "Light", "Shadow", "Iron", "Gold", "Fire", "Ice", "Storm", "Elite", "Pro"]
     suffixes = ["Slayer", "King", "Wolf", "Bear", "Hawk", "Lord", "Mage", "Knight", "Br", "X"]
     classes = ["Guerreiro", "Mago", "Arqueiro", "Paladino", "Ogro", "Necromante", "Assassino", "Feiticeiro"]
+    
     bots = []
     for i in range(200):
-        name = f"{random.choice(prefixes)}{random.choice(suffixes)}{random.randint(1, 99)}"[:15]
+        # Gera nome aleatório
+        name = f"{random.choice(prefixes)}{random.choice(suffixes)}{random.randint(1, 99)}"
+        name = name[:15] # Garante limite de caracteres
+        
         char_class = random.choice(classes)
         lvl = random.randint(1, 50)
+        
+        # Cria o Bot com status variados
         bot = Player(
-            id=100000 + i, username=f"bot_{i}", name=name, class_name=char_class,
-            level=lvl, xp=0, gold=random.randint(100, 50000), gems=random.randint(0, 100),
+            id=100000 + i, # ID Falso
+            username=f"bot_{i}",
+            name=name,
+            class_name=char_class,
+            level=lvl,
+            xp=0,
+            gold=random.randint(100, 50000),
+            gems=random.randint(0, 100),
             pvp_rating=1000 + (lvl * 10) + random.randint(-50, 50),
+            # Status base genéricos para o bot
             health=100, max_health=100, strength=10, intelligence=10, defense=10,
             speed=5, crit_chance=5
         )
         bots.append(bot)
+    
     db.add_all(bots)
     db.commit()
+    print("Bots criados com sucesso!")
 
 def init_db():
-    # 1. Cria tabelas básicas se não existirem
+    """Inicializa o Banco de Dados"""
+    
+    # ---------------------------------------------------------
+    # ⚠️ ÁREA DE RESET (Use apenas para corrigir o esquema)
+    # Como você adicionou colunas novas (farm, guild link), 
+    # precisamos apagar as tabelas antigas.
+    # ---------------------------------------------------------
+    print("♻️ RESETANDO TABELAS DO BANCO DE DADOS...")
+    Base.metadata.drop_all(bind=engine) 
+    # ---------------------------------------------------------
+
+    # Cria as tabelas novas (Corretas)
     Base.metadata.create_all(bind=engine)
     
-    # 2. Roda a migração para adicionar colunas novas em tabelas velhas
-    migrate_db()
-    
-    # 3. Cria os bots
+    # Cria os bots novamente
     db = SessionLocal()
     seed_bots(db)
     db.close()
+    
+    print("✅ Banco de Dados Atualizado e Pronto!")
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
