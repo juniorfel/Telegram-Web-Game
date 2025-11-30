@@ -168,6 +168,15 @@ async def daily_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 # --- Função Principal do Bot ---
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a message to the user."""
+    logger.error("Exception while handling an update:", exc_info=context.error)
+    
+    # Opcional: Enviar uma mensagem de erro amigável ao usuário
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "Desculpe, ocorreu um erro interno ao processar seu comando. Tente novamente mais tarde."
+        )
 
 def main_bot(token: str) -> Application:
     """Configura e retorna a aplicação do bot."""
