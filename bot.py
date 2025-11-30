@@ -39,7 +39,7 @@ BASE_STATS = {
     "Feiticeiro": {"str": 6, "int": 9, "def": 8, "hp": 50, "spd": 5, "crit": 6, "desc": "🐍 Maldição: Inimigo pode errar o ataque."},
 }
 
-# --- Funções Auxiliares ---
+# --- Funções Auxiliares (Mantidas) ---
 def get_db(): return SessionLocal()
 def get_player(user_id, db): return db.query(Player).filter(Player.id == user_id).first()
 def format_number(num): return str(int(num))
@@ -116,7 +116,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for c in classes:
             label = f"{c} 🎲" if c == 'Aleatorio' else c
             row.append(InlineKeyboardButton(label, callback_data=f'class_{c}'))
-            if len(row) == 3: kb.append(row); row = [] # <--- A correção de escopo está aqui
+            if len(row) == 3: kb.append(row); row = []
         
         msg = f"Bem-vindo ao Idle War! Escolha sua classe:"
         if context.user_data.get('referrer_id'):
@@ -125,7 +125,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     else:
-        # Aplica a cura passiva antes de mostrar o menu
         heal_amount = apply_passive_healing(player, db)
         db.commit()
         
@@ -165,7 +164,7 @@ async def show_main_menu(update: Update, player: Player):
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
 
-# --- RECEBIMENTO DE TEXTO (Mantidos) ---
+# --- RECEBIMENTO DE TEXTO ---
 async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_data = context.user_data
     
@@ -316,8 +315,8 @@ def main_bot(token: str) -> Application:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cheat", admin_cheat))
     
+    # Mensagens e Callbacks
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text_input))
-    app.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
     app.add_handler(CallbackQueryHandler(confirm_name_handler, pattern='^confirm_name_'))
     app.add_handler(CallbackQueryHandler(handle_menu))
 
