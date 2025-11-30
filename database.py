@@ -1,9 +1,10 @@
 import os
 import random
-from sqlalchemy import create_engine, Column, Integer, String, BigInteger, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, BigInteger, DateTime, ForeignKey, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
 
+# --- Configuração de Conexão ---
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///idle_war.db")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -11,6 +12,8 @@ if DATABASE_URL.startswith("postgres://"):
 engine = create_engine(DATABASE_URL)
 Base = declarative_base()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# --- Modelos de Dados ---
 
 class Player(Base):
     __tablename__ = "players"
@@ -41,10 +44,10 @@ class Player(Base):
     pvp_rating = Column(Integer, default=1000)
     guild_id = Column(Integer, ForeignKey("guilds.id"), nullable=True)
     
-    # --- NOVO: SISTEMA DE FAZENDA ---
-    farm_level = Column(Integer, default=1)      # Nível dos Campos (Produção)
-    barn_level = Column(Integer, default=1)      # Nível do Celeiro (Armazenamento)
-    last_farm_harvest = Column(DateTime, default=datetime.now) # Última colheita
+    # Fazenda
+    farm_level = Column(Integer, default=1)
+    barn_level = Column(Integer, default=1)
+    last_farm_harvest = Column(DateTime, default=datetime.now)
 
     # Timestamps
     last_daily_claim = Column(DateTime, default=datetime.min)
@@ -54,11 +57,32 @@ class Guild(Base):
     __tablename__ = "guilds"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), unique=True)
-    telegram_link = Column(String(100)) # Link do Grupo
+    telegram_link = Column(String(100))
     leader_id = Column(BigInteger)
     total_rating = Column(Integer, default=0)
-    member_count = Column(Integer, default=1) # Contador simples
+    member_count = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.now)
+
+# --- Funções de Migração e Seeding ---
+
+def migrate_db():
+    """Função de Auto-Correção: Adiciona colunas que faltam sem apagar dados."""
+    print("Verificando estrutura do banco de dados...")
+    with engine.connect() as conn:
+        try:
+            # Adiciona colunas da FAZENDA se não existirem
+            conn.execute(text("ALTER TABLE players ADD COLUMN IF NOT EXISTS farm_level INTEGER DEFAULT 1;"))
+            conn.execute(text("ALTER TABLE players ADD COLUMN IF NOT EXISTS barn_level INTEGER DEFAULT 1;"))
+            conn.execute(text("ALTER TABLE players ADD COLUMN IF NOT EXISTS last_farm_harvest TIMESTAMP;"))
+            
+            # Adiciona colunas da GUILDA se não existirem
+            conn.execute(text("ALTER TABLE guilds ADD COLUMN IF NOT EXISTS telegram_link VARCHAR(100);"))
+            conn.execute(text("ALTER TABLE guilds ADD COLUMN IF NOT EXISTS member_count INTEGER DEFAULT 1;"))
+            
+            conn.commit()
+            print("Migração de banco de dados concluída com sucesso.")
+        except Exception as e:
+            print(f"Aviso na migração (pode ser ignorado se as colunas já existirem): {e}")
 
 def seed_bots(db):
     if db.query(Player).count() > 10: return
@@ -83,7 +107,13 @@ def seed_bots(db):
     db.commit()
 
 def init_db():
+    # 1. Cria tabelas básicas se não existirem
     Base.metadata.create_all(bind=engine)
+    
+    # 2. Roda a migração para adicionar colunas novas em tabelas velhas
+    migrate_db()
+    
+    # 3. Cria os bots
     db = SessionLocal()
     seed_bots(db)
     db.close()
