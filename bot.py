@@ -2,8 +2,7 @@ import logging
 import random
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-# FIX: Removido ErrorHandler daqui para corrigir ImportError
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters 
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from database import Player, Guild, SessionLocal, init_db
 from sqlalchemy import func, or_
 from typing import List 
@@ -12,13 +11,14 @@ from typing import List
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Constantes do Jogo ---
 ADMIN_ID = 387214847
 STAMINA_COST = 1
 GUILD_CREATE_COST = 100
 GUILD_MIN_LEVEL = 50
 INITIAL_GOLD = 1000
 RESPEC_COST = 100
+
+# Constantes
 REFERRAL_GEMS_NEW = 10
 REFERRAL_GOLD_NEW = 2000
 REFERRAL_GEMS_INVITER = 25
@@ -40,7 +40,7 @@ BASE_STATS = {
 }
 VALID_CLASSES = list(BASE_STATS.keys())
 
-# --- Funções Auxiliares de BD e Jogo ---
+# --- Funções Auxiliares ---
 def get_db(): return SessionLocal()
 def get_player(user_id, db): return db.query(Player).filter(Player.id == user_id).first()
 def format_number(num): return str(int(num)) if num else "0"
@@ -106,22 +106,8 @@ def simulate_pvp_battle(attacker: Player, defender: Player):
 
     return attacker if hp_atk > 0 else defender
 
-# --- FUNÇÃO DO TECLADO ---
-def get_main_keyboard() -> List[List[InlineKeyboardButton]]:
-    """Gera o teclado principal do menu."""
-    return [
-        [InlineKeyboardButton("Info/Perfil ❓", callback_data='menu_info'),
-         InlineKeyboardButton("Batalhar ⚔️", callback_data='menu_battle_mode'),
-         InlineKeyboardButton("Diário 🎁", callback_data='menu_daily')],
-        [InlineKeyboardButton("Correio ✉️", callback_data='menu_mailbox'),
-         InlineKeyboardButton("Ranking 🏆", callback_data='menu_ranking'),
-         InlineKeyboardButton("LOJA VIP 💎", callback_data='menu_shop')],
-        [InlineKeyboardButton("Guilda 🛡️", callback_data='menu_guild'),
-         InlineKeyboardButton("Upgrade 💪", callback_data='menu_upgrade'),
-         InlineKeyboardButton("Construções 🏗️", callback_data='menu_constructions')]
-    ]
+# --- ADMIN E PERMISSÕES ---
 
-# --- ADMIN ---
 def is_admin(user_id, db=None):
     if user_id == ADMIN_ID: return True
     if db:
@@ -129,36 +115,35 @@ def is_admin(user_id, db=None):
         if p and p.is_admin: return True
     return False
 
-# --- FUNÇÕES ADMIN (CAUSA DO NAMEERROR) ---
-
 async def admin_cheat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_db()
-    if not is_admin(update.effective_user.id, db): db.close(); return
-    p = get_player(update.effective_user.id, db)
-    if p:
-        p.gold += 50000; p.gems += 500; p.level = 50; p.stamina = p.max_stamina
-        db.commit()
-        msg = ("🕵️ **Modo Deus Ativado!**\n\n"
-               "👑 **Comandos GM:**\n"
-               "`/banir [ID]` - Banir Jogador\n"
-               "`/conta [ID]` - Deletar Conta\n"
-               "`/ouro [ID] [QTD]` - Dar Ouro\n"
-               "`/gemas [ID] [QTD]` - Dar Gemas\n"
-               "`/xp [ID] [QTD]` - Dar XP\n"
-               "`/promote [ID]` - Add Admin\n"
-               "`/demote [ID]` - Remove Admin")
-        await update.message.reply_text(msg, parse_mode='Markdown')
-    db.close()
+    try:
+        if not is_admin(update.effective_user.id, db): return
+        p = get_player(update.effective_user.id, db)
+        if p:
+            p.gold += 50000; p.gems += 500; p.level = 50; p.stamina = p.max_stamina
+            db.commit()
+            msg = ("🕵️ **Modo Deus Ativado!**\n\n"
+                   "👑 **Comandos GM:**\n"
+                   "`/banir [ID]` - Banir Jogador\n"
+                   "`/conta [ID]` - Deletar Conta\n"
+                   "`/ouro [ID] [QTD]` - Dar Ouro\n"
+                   "`/gemas [ID] [QTD]` - Dar Gemas\n"
+                   "`/xp [ID] [QTD]` - Dar XP\n"
+                   "`/promote [ID]` - Add Admin\n"
+                   "`/demote [ID]` - Remove Admin")
+            await update.message.reply_text(msg, parse_mode='Markdown')
+    finally: db.close()
 
 async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db()
-    if not is_admin(update.effective_user.id, db): db.close(); return
     try:
+        if not is_admin(update.effective_user.id, db): return
         tid = int(context.args[0]); t = get_player(tid, db)
         if t: t.is_banned = True; db.commit(); await update.message.reply_text(f"🚫 {t.name} BANIDO.")
         else: await update.message.reply_text("Não encontrado.")
     except: await update.message.reply_text("Uso: /banir [ID]")
-    db.close()
+    finally: db.close()
 
 async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db()
@@ -168,7 +153,7 @@ async def admin_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if t: db.delete(t); db.commit(); await update.message.reply_text(f"🗑️ Conta {tid} DELETADA.")
         else: await update.message.reply_text("Não encontrado.")
     except: await update.message.reply_text("Uso: /conta [ID]")
-    db.close()
+    finally: db.close()
 
 async def admin_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db()
@@ -182,73 +167,90 @@ async def admin_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif cmd == 'gemas': t.gems += amt
             elif cmd == 'xp': t.xp += amt; check_level_up(t)
             db.commit(); await update.message.reply_text(f"✅ {amt} {cmd} para {t.name}.")
-        else: await update.message.reply_text("Não encontrado.")
+        else: await update.message.reply_text("Jogador não encontrado.")
     except: await update.message.reply_text(f"Uso: /{cmd} [ID] [QTD]")
-    db.close()
+    finally: db.close()
 
 async def admin_promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    db = get_db()
+    if update.effective_user.id != ADMIN_ID: db.close(); return
     try:
-        tid = int(context.args[0]); db = get_db(); t = get_player(tid, db)
+        tid = int(context.args[0]); t = get_player(tid, db)
         if t: t.is_admin = True; db.commit(); await update.message.reply_text(f"👑 {t.name} PROMOVIDO a Admin.")
-        db.close()
+        else: await update.message.reply_text("Não encontrado.")
     except: await update.message.reply_text("Uso: /promote [ID]")
+    finally: db.close()
 
 async def admin_demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    db = get_db()
+    if update.effective_user.id != ADMIN_ID: db.close(); return
     try:
-        tid = int(context.args[0]); db = get_db(); t = get_player(tid, db)
+        tid = int(context.args[0]); t = get_player(tid, db)
         if t: t.is_admin = False; db.commit(); await update.message.reply_text(f"👇 {t.name} REBAIXADO.")
-        db.close()
+        else: await update.message.reply_text("Não encontrado.")
     except: await update.message.reply_text("Uso: /demote [ID]")
+    finally: db.close()
 
+
+# --- FUNÇÃO DO TECLADO ---
+def get_main_keyboard() -> List[List[InlineKeyboardButton]]:
+    return [
+        [InlineKeyboardButton("Info/Perfil ❓", callback_data='menu_info'),
+         InlineKeyboardButton("Batalhar ⚔️", callback_data='menu_battle_mode'),
+         InlineKeyboardButton("Diário 🎁", callback_data='menu_daily')],
+        [InlineKeyboardButton("Correio ✉️", callback_data='menu_mailbox'),
+         InlineKeyboardButton("Ranking 🏆", callback_data='menu_ranking'),
+         InlineKeyboardButton("LOJA VIP 💎", callback_data='menu_shop')],
+        [InlineKeyboardButton("Guilda 🛡️", callback_data='menu_guild'),
+         InlineKeyboardButton("Upgrade 💪", callback_data='menu_upgrade'),
+         InlineKeyboardButton("Construções 🏗️", callback_data='menu_constructions')]
+    ]
 
 # --- START & MENU ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     db = get_db()
-    player = get_player(user.id, db)
+    try:
+        player = get_player(user.id, db)
 
-    if player and player.is_banned:
-        await update.message.reply_text("🚫 Conta Banida."); db.close(); return
+        if player and player.is_banned:
+            await update.message.reply_text("🚫 Conta Banida."); return
 
-    if context.args and not player:
-        try:
-            rid = int(context.args[0])
-            if rid != user.id: context.user_data['referrer_id'] = rid
-        except ValueError: pass 
+        if context.args and not player:
+            try:
+                rid = int(context.args[0])
+                if rid != user.id: context.user_data['referrer_id'] = rid
+            except ValueError: pass 
 
-    if not player:
-        # Lógica de Menu de Criação
-        summary = ""
-        for name, data in BASE_STATS.items():
-            summary += f"\n**{name}**: {data['desc']}\n   ❤️ {data['hp']} | 💪 {data['str']} | 🧠 {data['int']} | 🛡️ {data['def']}"
+        if not player:
+            # Lógica de Menu de Criação
+            summary = ""
+            for name, data in BASE_STATS.items():
+                summary += f"\n**{name}**: {data['desc']}\n   ❤️ {data['hp']} | 💪 {data['str']} | 🧠 {data['int']} | 🛡️ {data['def']}"
 
-        msg = (f"✨ **A Névoa se Dissipa!** ✨\n\n"
-               f"Viajante, o destino dos Reinos de Aerthos aguarda sua escolha.\n\n"
-               f"💰 **Recursos Iniciais:**\n{INITIAL_GOLD} Ouro\n0 Gemas\n\n"
-               f"Qual poder ancestral você irá empunhar?\n{summary}")
+            msg = (f"✨ **A Névoa se Dissipa!** ✨\n\n"
+                   f"Viajante, o destino dos Reinos de Aerthos aguarda sua escolha.\n\n"
+                   f"💰 **Recursos Iniciais:**\n{INITIAL_GOLD} Ouro\n0 Gemas\n\n"
+                   f"Qual poder ancestral você irá empunhar?\n{summary}")
 
-        kb = []; row = []
-        for c in VALID_CLASSES + ['Aleatorio']:
-            row.append(InlineKeyboardButton(f"{c} 🎲" if c=='Aleatorio' else c, callback_data=f'class_{c}'))
-            if len(row) == 3: kb.append(row); row = []
-        if row: kb.append(row)
+            kb = []; row = []
+            classes = list(BASE_STATS.keys()) + ['Aleatorio']
+            for c in classes:
+                row.append(InlineKeyboardButton(f"{c} 🎲" if c=='Aleatorio' else c, callback_data=f'class_{c}'))
+                if len(row) == 3: kb.append(row); row = []
+            if row: kb.append(row)
 
-        await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    else:
-        # Lógica de Player Existente
-        heal = apply_passive_healing(player, db)
-        db.commit()
-        
-        # O LOG MOSTRA QUE show_main_menu FALHA AQUI.
-        await show_main_menu(update, player)
-        
-        if heal > 0: await context.bot.send_message(chat_id=user.id, text=f"✨ Clínica: **+{heal} HP** recuperados.", parse_mode='Markdown')
-    db.close()
+            await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        else:
+            # Lógica de Player Existente
+            heal = apply_passive_healing(player, db)
+            db.commit()
+            await show_main_menu(update, player)
+            if heal > 0: await context.bot.send_message(chat_id=user.id, text=f"✨ Clínica: **+{heal} HP** recuperados.", parse_mode='Markdown')
+    finally: db.close()
 
 async def show_main_menu(update: Update, player: Player):
-    # CORREÇÃO: 'keyboard' está definida dentro da função auxiliar (get_main_keyboard)
+    # DEFINIÇÃO DO TECLADO
     keyboard = get_main_keyboard() 
     
     # Tratamento de segurança para XP/Nivel
@@ -266,16 +268,13 @@ async def show_main_menu(update: Update, player: Player):
             f"⚡ Stamina: {player.stamina}/{player.max_stamina}\n"
             f"💰 {format_number(player.gold)} | 💎 {player.gems}")
     
-    # ENVIO
     if update.callback_query:
         try:
             await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         except Exception: 
             await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     else:
-        # LINHA QUE ESTAVA CAUSANDO O NAMERROR
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
 
 # --- REGISTRO E TEXTO ---
 async def handle_class_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -648,7 +647,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main_bot(token: str) -> Application:
     init_db()
     app = Application.builder().token(token).build()
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cheat", admin_cheat))
     app.add_handler(CommandHandler("banir", admin_ban))
