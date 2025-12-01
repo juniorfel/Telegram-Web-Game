@@ -234,7 +234,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith('g_manage_'): await guild_manage_specific_member(update, context)
         elif data.startswith('g_act_'): await guild_execute_action(update, context)
         elif data == 'guild_send_mail': await guild_send_mail_start(update, context)
-        elif data == 'guild_war_placeholder': await guild_war_placeholder(update, context) # <--- NOVO
+        elif data == 'guild_war_placeholder': await guild_war_placeholder(update, context)
         elif data == 'guild_create_start':
             if player.gems < GUILD_CREATE_COST: await query.answer("Gemas insuficientes!", show_alert=True); return
             context.user_data['waiting_guild_name'] = True
@@ -281,33 +281,120 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         check_level_up(player); db.commit()
         await query.edit_message_text("✅ Resgatado!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
 
-    elif data == 'menu_refresh': await show_main_menu(update, player)
-    
-    # --- MENUS DE CONSTRUÇÃO E UPGRADE ---
+    # --- MENU DE CONSTRUÇÕES (TODAS AS 6) ---
     elif data == 'menu_constructions':
         prod_h = player.farm_level * 10
         cap = player.barn_level * 100
-        msg = (f"🏗️ **Distrito**\n🌾 Fazenda Lvl {player.farm_level}\n🏚️ Celeiro Lvl {player.barn_level}")
-        kb = [[InlineKeyboardButton("Fazenda 🌾", callback_data='constr_fazenda'), InlineKeyboardButton("Celeiro 🏚️", callback_data='constr_celeiro')], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
+        msg = (f"🏗️ **Distrito de Construções**\n\n"
+               f"🌾 Fazenda: Lvl {player.farm_level} ({prod_h}/h)\n"
+               f"🏚️ Celeiro: Lvl {player.barn_level} (Cap: {cap})\n"
+               f"⚔️ Quartel: Lvl {player.barracks_level}\n"
+               f"🔮 Academia: Lvl {player.academy_level}\n"
+               f"🏃 Pista: Lvl {player.track_level}\n"
+               f"❤️ Clínica: Lvl {player.clinic_level}\n\n"
+               f"Selecione uma estrutura para expandir:")
+        
+        kb = [[InlineKeyboardButton("Fazenda 🌾", callback_data='constr_fazenda'), InlineKeyboardButton("Quartel ⚔️", callback_data='constr_quartel')],
+              [InlineKeyboardButton("Academia 🔮", callback_data='constr_academia'), InlineKeyboardButton("Pista 🏃‍♂️", callback_data='constr_pista')],
+              [InlineKeyboardButton("Clínica ❤️", callback_data='constr_clinica'), InlineKeyboardButton("Celeiro 🏚️", callback_data='constr_celeiro')],
+              [InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
     elif data.startswith('constr_') or data.startswith('upgrade_'):
-        B = {'fazenda': {'a':'farm_level', 'c':500}, 'celeiro': {'a':'barn_level', 'c':500}}
-        key = data.split('_')[1]; conf = B.get(key)
+        B = {'fazenda': {'a':'farm_level', 'c':500, 'd':'Produz Trigo/Ouro'}, 
+             'celeiro': {'a':'barn_level', 'c':500, 'd':'Aumenta capacidade de estoque'},
+             'quartel': {'a':'barracks_level', 'c':2000, 'd':'Aumenta Força e Defesa'},
+             'academia': {'a':'academy_level', 'c':1500, 'd':'Aumenta Inteligência e XP'},
+             'pista': {'a':'track_level', 'c':2500, 'd':'Aumenta Velocidade e Crítico'},
+             'clinica': {'a':'clinic_level', 'c':3000, 'd':'Regenera HP offline'}}
+        
+        key = data.split('_')[1]
+        conf = B.get(key)
+        
         if conf:
-            lvl = getattr(player, conf['a']); cost = int(conf['c'] * (1.5 ** lvl))
+            lvl = getattr(player, conf['a'])
+            cost = int(conf['c'] * (1.5 ** lvl))
+            
             if data.startswith('upgrade_'):
-                if player.gold >= cost: player.gold -= cost; setattr(player, conf['a'], lvl+1); db.commit(); await query.answer("Up!"); lvl+=1; cost = int(conf['c'] * (1.5 ** lvl))
-                else: await query.answer("Sem ouro!")
-            kb = [[InlineKeyboardButton(f"⬆️ Upar ({cost}g)", callback_data=f'upgrade_{key}')], [InlineKeyboardButton("🔙", callback_data='menu_constructions')]]
-            if key == 'fazenda' and lvl>0: kb.insert(0, [InlineKeyboardButton("💰 Vender", callback_data='farm_harvest')])
-            await query.edit_message_text(f"🏗️ **{key}** Lvl {lvl}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                if player.gold >= cost:
+                    player.gold -= cost; setattr(player, conf['a'], lvl+1); db.commit()
+                    await query.answer("🔨 Construção Melhorada!"); lvl += 1; cost = int(conf['c'] * (1.5 ** lvl))
+                else: await query.answer("🚫 Ouro insuficiente!", show_alert=True)
+
+            kb = [[InlineKeyboardButton(f"⬆️ Melhorar (Custo: {cost}g)", callback_data=f'upgrade_{key}')]]
+            if key == 'fazenda' and lvl > 0: kb.insert(0, [InlineKeyboardButton("💰 Vender Colheita", callback_data='farm_harvest')])
+            kb.append([InlineKeyboardButton("🔙 Voltar", callback_data='menu_constructions')])
+            
+            await query.edit_message_text(f"🏗️ **{key.capitalize()}** (Nível {lvl})\n_{conf['d']}_", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
     elif data == 'farm_harvest':
         now = datetime.now(); elapsed = (now - player.last_farm_harvest).total_seconds() / 3600
-        amt = int(elapsed * player.farm_level * 100)
-        if amt > 0: player.gold += amt; player.last_farm_harvest = now; db.commit(); await query.answer(f"+{amt}g")
-        else: await query.answer("Vazio.")
+        amount = int(elapsed * player.farm_level * 100)
+        if amount > 0:
+            player.gold += amount; player.last_farm_harvest = now; db.commit()
+            await query.answer(f"💰 Vendeu por {amount}g!")
+        else: await query.answer("🌾 Colheita vazia.")
         await handle_menu(update, context)
 
+    # --- MENUS RESTANTES (UPGRADE, RANKING, ETC) ---
+    elif data == 'menu_upgrade':
+        msg = (f"💪 **Centro de Treinamento**\n\n"
+               f"📊 **Seus Atributos:**\n"
+               f"💪 Força: {player.strength}\n"
+               f"🧠 Inteligência: {player.intelligence}\n"
+               f"🛡️ Defesa: {player.defense}\n"
+               f"⚡ Velocidade: {player.speed}\n"
+               f"💥 Crítico: {player.crit_chance}%\n\n"
+               f"💰 Saldo: {player.gold}g | {player.gems}💎")
+        
+        c_str = int(50 + (player.strength * 20))
+        kb = [[InlineKeyboardButton(f"💪 Treinar Força ({c_str}g)", callback_data='up_str')],
+              [InlineKeyboardButton(f"🔄 Reencarnar (Mudar Classe)", callback_data='respec_start')],
+              [InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+    elif data.startswith('up_'):
+        c = int(50 + (player.strength * 20))
+        if player.gold >= c:
+            player.gold -= c; player.strength += 1; db.commit()
+            await query.answer("💪 +1 Força!")
+            await handle_menu(update, context)
+        else: await query.answer("🚫 Ouro insuficiente!", show_alert=True)
+
+    elif data == 'respec_start':
+        kb = []; row = []
+        for c in VALID_CLASSES:
+            row.append(InlineKeyboardButton(c, callback_data=f'respec_{c}'))
+            if len(row)==3: kb.append(row); row=[]
+        if row: kb.append(row)
+        kb.append([InlineKeyboardButton("🔙", callback_data='menu_upgrade')])
+        await query.edit_message_text(f"🔄 **Reencarnação**\nCusto: {RESPEC_COST} Gemas.\nEscolha seu novo destino:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+    elif data.startswith('respec_'):
+        if player.gems >= RESPEC_COST:
+            nc = data.split('_')[1]; s = BASE_STATS[nc]
+            player.gems -= RESPEC_COST; player.class_name = nc; player.strength = s['str']; player.defense = s['def']; player.intelligence = s['int']; player.health = player.max_health; db.commit()
+            await query.edit_message_text(f"✨ **Renascimento Completo!**\nVocê agora é um {nc}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
+        else: await query.answer("🚫 Gemas insuficientes!", show_alert=True)
+
+    elif data == 'menu_mailbox':
+        kb = [[InlineKeyboardButton("📢 Canal Oficial", url=OFFICIAL_CHANNEL_LINK)], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
+        await query.edit_message_text("✉️ **Correio Real**\nFique atento aos decretos e eventos:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+    elif data == 'menu_info':
+        lnk = f"https://t.me/{BOT_USERNAME}?start={player.id}"
+        await query.edit_message_text(f"📜 **Pergaminho de Status**\n\n**{player.name}**\n💪 {player.strength} | 🧠 {player.intelligence}\n🛡️ {player.defense} | ⚡ {player.speed}\n\n🔗 **Recrutamento:**\n`{lnk}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
+
+    elif data == 'menu_shop':
+        await query.edit_message_text("💎 **Mercado Negro VIP**\n\n🚧 Os mercadores estão viajando. (Em breve via XSolla)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
+
+    elif data == 'menu_ranking':
+        top = db.query(Player).order_by(Player.pvp_rating.desc()).limit(10).all()
+        txt = "🏆 **Salão da Fama**\n" + "\n".join([f"#{i+1} {p.name} ({p.pvp_rating} Pts)" for i, p in enumerate(top)])
+        await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
+
+    elif data == 'menu_refresh': await show_main_menu(update, player)
+    
     db.close()
 
 # COMANDOS NOVOS
