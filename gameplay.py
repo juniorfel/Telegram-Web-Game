@@ -107,7 +107,6 @@ async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         db = get_db(); p = get_player(update.effective_user.id, db)
         
-        # --- VERIFICAÇÃO FINAL DE GEMAS ---
         if p.gems < GUILD_CREATE_COST:
             await update.message.reply_text(f"🚫 **Erro:** Você precisa de {GUILD_CREATE_COST} Gemas para fundar a guilda!\nSeu saldo atual: {p.gems} 💎", parse_mode='Markdown')
             ud['waiting_guild_link'] = False
@@ -168,11 +167,14 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player = get_player(query.from_user.id, db)
     if not player: return
 
+    # --- MENU DE BATALHA (MOSTRANDO STAMINA) ---
     if data == 'menu_battle_mode':
         st = get_total_stats(player) # Mostra stats reais
-        msg = (f"⚔️ **Zona de Batalha**\n\n📊 **Stats Reais (com Guilda):**\n"
+        msg = (f"⚔️ **Zona de Batalha**\n\n"
+               f"⚡ **Stamina: {player.stamina}/{player.max_stamina}**\n" # <--- MOSTRANDO CLARAMENTE
+               f"📊 **Atributos:**\n"
                f"💪 {st['str']} | 🧠 {st['int']} | 🛡️ {st['def']}\n"
-               f"⚡ {st['spd']} | ❤️ {st['hp']}\n"
+               f"💨 {st['spd']} | ❤️ {st['hp']}\n"
                f"🏆 Rank: {player.pvp_rating}")
         kb = [[InlineKeyboardButton("🗺️ Campanha PVE", callback_data='battle_pve_start'), 
                InlineKeyboardButton("🆚 Arena PVP", callback_data='battle_pvp_start')], 
@@ -182,12 +184,17 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'battle_pve_start':
         m = generate_monster(player.current_phase_id)
         context.user_data['monster'] = m
-        msg = (f"🗺️ **Campanha: Fase {player.current_phase_id}**\n🔥 {m['name']}\n❤️ HP: {m['hp']} | ⚡ Spd: {m['spd']}\n💰 {m['gold']}g | ✨ {m['xp']}xp")
+        msg = (f"🗺️ **Campanha: Fase {player.current_phase_id}**\n\n"
+               f"⚡ **Sua Stamina: {player.stamina}/{player.max_stamina}**\n\n" # <--- MOSTRANDO
+               f"🔥 {m['name']}\n❤️ HP: {m['hp']} | ⚡ Spd: {m['spd']}\n💰 {m['gold']}g | ✨ {m['xp']}xp")
         kb = [[InlineKeyboardButton("⚔️ ATACAR (1 Stamina)", callback_data='confirm_pve')], [InlineKeyboardButton("🔙", callback_data='menu_battle_mode')]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'confirm_pve':
-        if player.stamina < STAMINA_COST: await query.answer("⚡ Exausto!", show_alert=True); return
+        if player.stamina < STAMINA_COST: 
+            await query.answer(f"🚫 Sem Stamina! Você tem {player.stamina}/{STAMINA_COST}.", show_alert=True) # <--- AVISO CLARO
+            return
+        
         m = context.user_data.get('monster')
         
         # Gate de Boss
@@ -222,16 +229,19 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             icon = "🟢" if o.pvp_rating <= player.pvp_rating else "🔴"
             kb.append([InlineKeyboardButton(f"{icon} {o.name} ({o.pvp_rating})", callback_data=f'pre_fight_{o.id}')])
         kb.append([InlineKeyboardButton("🔄 Atualizar", callback_data='battle_pvp_start'), InlineKeyboardButton("🔙", callback_data='menu_battle_mode')])
-        await query.edit_message_text(f"⚔️ **Arena PvP**\nSeus Pontos: {player.pvp_rating}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await query.edit_message_text(f"⚔️ **Arena PvP**\n⚡ **Stamina: {player.stamina}/{player.max_stamina}**\nSeus Pontos: {player.pvp_rating}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data.startswith('pre_fight_'):
         oid = int(data.split('_')[2]); opp = db.query(Player).filter(Player.id == oid).first()
         context.user_data['opponent_id'] = opp.id
         kb = [[InlineKeyboardButton("⚔️ LUTAR (1 Stamina)", callback_data='confirm_pvp')], [InlineKeyboardButton("🔙", callback_data='battle_pvp_start')]]
-        await query.edit_message_text(f"🆚 **{opp.name}**\nRating: {opp.pvp_rating}\nVitória: +25 | Derrota: -15", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await query.edit_message_text(f"🆚 **{opp.name}**\nRating: {opp.pvp_rating}\n\n⚡ **Sua Stamina: {player.stamina}/{player.max_stamina}**\n\nVitória: +25 | Derrota: -15", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'confirm_pvp':
-        if player.stamina < STAMINA_COST: await query.answer("⚡ Exausto!", show_alert=True); return
+        if player.stamina < STAMINA_COST:
+            await query.answer(f"🚫 Sem Stamina! Você tem {player.stamina}/{STAMINA_COST}.", show_alert=True) # <--- AVISO CLARO
+            return
+            
         opp = db.query(Player).filter(Player.id == context.user_data.get('opponent_id')).first()
         player.stamina -= STAMINA_COST
         winner = simulate_pvp_battle(player, opp)
