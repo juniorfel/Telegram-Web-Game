@@ -1,3 +1,4 @@
+# guild_system.py
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -21,6 +22,7 @@ def check_permission(player, action):
 # --- LÓGICA DE INATIVIDADE (SUCESSÃO) ---
 def process_leadership_inactivity(guild, leader, db):
     now = datetime.now()
+    if not leader.last_active: return None # Proteção se last_active for None
     days_inactive = (now - leader.last_active).days
     
     if guild.leadership_transfer_active and days_inactive < 60: # Líder voltou
@@ -31,6 +33,9 @@ def process_leadership_inactivity(guild, leader, db):
         return "⚠️ **ALERTA DE SUCESSÃO:** Líder inativo há 60 dias! Troca em 30 dias."
 
     if guild.leadership_transfer_active:
+        if not guild.leadership_transfer_start: # Proteção extra
+             guild.leadership_transfer_start = now; db.commit()
+             
         days_in_process = (now - guild.leadership_transfer_start).days
         if days_in_process >= 30: # TROCA AGORA
             successor = db.query(Player).filter(Player.guild_id == guild.id, Player.guild_role == 'coolider').order_by(Player.guild_join_date.asc()).first()
@@ -40,6 +45,8 @@ def process_leadership_inactivity(guild, leader, db):
                 leader.guild_role = 'coolider'; successor.guild_role = 'lider'; guild.leader_id = successor.id
                 guild.leadership_transfer_active = False; guild.leadership_transfer_start = None; db.commit()
                 return f"👑 **NOVO LÍDER!**\nA liderança passou para **{successor.name}**!"
+            else:
+                return "⚠️ Processo de sucessão falhou: Nenhum sucessor elegível."
         else:
             return f"⚠️ **SUCESSÃO EM ANDAMENTO**: Faltam {30 - days_in_process} dias."
     return None
