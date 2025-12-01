@@ -28,7 +28,7 @@ def check_level_up(player):
         player.xp -= player.level * 100
         player.level += 1
         player.max_health += 5
-        player.health = player.max_health
+        player.health = player.max_health # Mantém sincronizado
         player.strength += 1
         player.defense += 1
         leveled_up = True
@@ -46,34 +46,33 @@ def get_construction_cost(level, initial_cost=1000):
     return int(initial_cost * (1.5 ** level))
 
 def apply_passive_healing(player, db):
+    # Função mantida apenas para restaurar Stamina se necessário futuramente
+    # Como o HP não gasta, ela apenas atualiza o timestamp
     now = datetime.now()
     if not player.last_stamina_gain: 
         player.last_stamina_gain = now
-        return 0
-        
-    elapsed = (now - player.last_stamina_gain).total_seconds() / 3600
-    clinic_level = player.clinic_level if hasattr(player, 'clinic_level') and player.clinic_level else 0
-    
-    total_heal = 0
-    if clinic_level > 0 and player.health < player.max_health:
-        total_heal = int(player.max_health * HEAL_RATE_PER_HOUR * clinic_level * elapsed)
-        if total_heal > 0:
-            player.health = min(player.max_health, player.health + total_heal)
-    
-    # Atualiza timestamp
     player.last_stamina_gain = now 
-    return total_heal
+    return 0
 
 def simulate_pvp_battle(attacker, defender):
-    hp_atk = attacker.health
-    hp_def = defender.health
+    """
+    Simula batalha sem causar dano permanente ao banco de dados.
+    """
+    # Variáveis Temporárias para a Simulação
+    hp_atk = attacker.max_health # Usa Max Health sempre
+    hp_def = defender.max_health
+    
     atk_turn = attacker.speed >= defender.speed
     max_turns = 20
     
     for _ in range(max_turns):
         if hp_atk <= 0 or hp_def <= 0: break
+        
         act = attacker if atk_turn else defender
         pas = defender if atk_turn else attacker
+        
+        # Lógica de Combate (Esquiva/Crit/Defesa)
+        # Nota: Usamos pas.speed/act.strength direto dos objetos, pois eles não mudam na luta
         
         dodge = max(0, (pas.speed - act.speed) * 2)
         if random.randint(1, 100) <= dodge:
@@ -85,8 +84,11 @@ def simulate_pvp_battle(attacker, defender):
         reduction = pas.defense / (pas.defense + 100)
         dmg_final = int(dmg * (1 - reduction))
         
-        if pas == attacker: hp_atk -= dmg_final
+        # Aplica dano nas variáveis LOCAIS (não no banco)
+        if pas.id == attacker.id: hp_atk -= dmg_final
         else: hp_def -= dmg_final
+        
         atk_turn = not atk_turn
 
+    # Retorna o vencedor baseado no HP restante da simulação
     return attacker if hp_atk > 0 else defender
