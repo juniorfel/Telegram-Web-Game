@@ -79,32 +79,6 @@ def apply_passive_healing(player: Player, db):
     if player.health == player.max_health: player.last_stamina_gain = now 
     return 0
 
-def simulate_pvp_battle(attacker: Player, defender: Player):
-    hp_atk = attacker.health; hp_def = defender.health
-    atk_turn = attacker.speed >= defender.speed
-    max_turns = 20
-    
-    for _ in range(max_turns):
-        if hp_atk <= 0 or hp_def <= 0: break
-        act = attacker if atk_turn else defender
-        pas = defender if atk_turn else attacker
-        
-        dodge = max(0, (pas.speed - act.speed) * 2)
-        if random.randint(1, 100) <= dodge:
-            atk_turn = not atk_turn; continue
-
-        dmg = (act.strength * 2) + act.intelligence
-        if random.randint(1, 100) <= act.crit_chance: dmg *= 2
-            
-        reduction = pas.defense / (pas.defense + 100)
-        dmg_final = int(dmg * (1 - reduction))
-        
-        if pas == attacker: hp_atk -= dmg_final
-        else: hp_def -= dmg_final
-        atk_turn = not atk_turn
-
-    return attacker if hp_atk > 0 else defender
-
 # --- SISTEMA DE ADMIN (GM) ---
 
 def is_admin(user_id, db=None):
@@ -114,15 +88,29 @@ def is_admin(user_id, db=None):
         if p and p.is_admin: return True
     return False
 
-async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Cheat agora é o HUB de admin
+async def admin_cheat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_db()
     if not is_admin(update.effective_user.id, db): db.close(); return
-    msg = ("👑 **COMANDOS GM**\n"
-           "/banir [ID]\n/conta [ID] (Delete)\n"
-           "/ouro [ID] [QTD]\n/gemas [ID] [QTD]\n/xp [ID] [QTD]\n"
-           "/promote [ID]\n/demote [ID]\n/cheat (Modo Deus)")
+    p = get_player(update.effective_user.id, db)
+    if p:
+        # 1. Dá Recursos
+        p.gold += 50000; p.gems += 500; p.level = 50; p.stamina = p.max_stamina
+        db.commit()
+        
+        # 2. Mostra Lista de Comandos
+        msg = ("🕵️ **Modo Deus Ativado!** (Recursos Máximos)\n\n"
+               "👑 **Lista de Comandos:**\n"
+               "`/banir [ID]` - Banir Jogador\n"
+               "`/conta [ID]` - Deletar Conta\n"
+               "`/ouro [ID] [QTD]` - Dar Ouro\n"
+               "`/gemas [ID] [QTD]` - Dar Gemas\n"
+               "`/xp [ID] [QTD]` - Dar XP\n"
+               "`/promote [ID]` - Add Admin\n"
+               "`/demote [ID]` - Remove Admin")
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
     db.close()
-    await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = get_db()
@@ -176,16 +164,6 @@ async def admin_demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.close()
     except: await update.message.reply_text("Uso: /demote [ID]")
 
-async def admin_cheat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db = get_db()
-    if not is_admin(update.effective_user.id, db): db.close(); return
-    p = get_player(update.effective_user.id, db)
-    if p:
-        p.gold += 50000; p.gems += 500; p.level = 50; p.stamina = p.max_stamina
-        db.commit()
-        await update.message.reply_text("🕵️ **Modo Deus.** Recursos concedidos.")
-    db.close()
-
 # --- START & MENU ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -202,13 +180,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except ValueError: pass 
 
     if not player:
+        # Texto Mágico
         summary = ""
         for name, data in BASE_STATS.items():
             summary += f"\n**{name}**: {data['desc']}\n   ❤️ {data['hp']} | 💪 {data['str']} | 🧠 {data['int']} | 🛡️ {data['def']}"
 
         msg = (f"✨ **A Névoa se Dissipa!** ✨\n\n"
                f"Viajante, o destino dos Reinos de Aerthos aguarda sua escolha.\n\n"
-               f"💰 **Recursos:**\n{INITIAL_GOLD} Ouro\n0 Gemas\n\n"
+               f"💰 **Recursos Iniciais:**\n{INITIAL_GOLD} Ouro\n0 Gemas\n\n"
                f"Qual poder ancestral você irá empunhar?\n{summary}")
 
         kb = []; row = []
@@ -221,10 +200,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         heal = apply_passive_healing(player, db)
         db.commit()
-        
-        if is_admin(user.id, db):
-            await update.message.reply_text("👑 **Admin:** Digite /admin para ver comandos.", parse_mode='Markdown')
-            
+        # Admin message removed from here
         await show_main_menu(update, player)
         if heal > 0: await context.bot.send_message(chat_id=user.id, text=f"✨ Clínica: **+{heal} HP** recuperados.", parse_mode='Markdown')
     db.close()
@@ -242,14 +218,10 @@ async def show_main_menu(update: Update, player: Player):
          InlineKeyboardButton("Construções 🏗️", callback_data='menu_constructions')]
     ]
     
-    # Tratamento de segurança para XP/Nivel
-    lvl = player.level if player.level else 1
-    xp = player.xp if player.xp else 0
-    needed = lvl * 100
-    perc = (xp / needed) * 100 if needed > 0 else 0
-    
-    text = (f"**{player.name}** (Lvl {lvl} {player.class_name})\n"
-            f"Exp: {format_number(xp)}/{format_number(needed)} ({perc:.1f}%)\n"
+    needed = player.level * 100
+    perc = (player.xp / needed) * 100
+    text = (f"**{player.name}** (Lvl {player.level} {player.class_name})\n"
+            f"Exp: {format_number(player.xp)}/{format_number(needed)} ({perc:.1f}%)\n"
             f"❤️ HP: {player.health}/{player.max_health}\n"
             f"⚡ Stamina: {player.stamina}/{player.max_stamina}\n"
             f"💰 {format_number(player.gold)} | 💎 {player.gems}")
@@ -362,7 +334,6 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                speed=s['spd'], crit_chance=s['crit'], gold=INITIAL_GOLD, level=1, xp=0)
     db.add(p); db.commit()
     
-    # REFRESH CRUCIAL para evitar bugs de leitura imediata
     db.refresh(p)
     
     rid = context.user_data.get('referrer_id')
@@ -443,7 +414,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         opp = db.query(Player).filter(Player.id == context.user_data.get('opponent_id')).first()
         player.stamina -= STAMINA_COST
         
-        # Simulação PVP
         winner = simulate_pvp_battle(player, opp)
         
         if winner.id == player.id:
@@ -455,7 +425,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.commit()
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Continuar", callback_data='menu_battle_mode')]]), parse_mode='Markdown')
 
-    # --- GUILDA ---
     elif data == 'menu_guild':
         if player.guild_id:
             g = db.query(Guild).filter(Guild.id == player.guild_id).first()
@@ -509,7 +478,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['waiting_donation_type'] = data.split('_')[-1]
         await query.edit_message_text(f"🏦 Digite o valor para doar:")
 
-    # --- MENU DE CONSTRUÇÕES ---
     elif data == 'menu_constructions':
         prod_h = player.farm_level * 10
         cap = player.barn_level * 100
@@ -562,7 +530,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await query.answer("🌾 Colheita vazia.")
         await handle_menu(update, context)
 
-    # --- UPGRADE ---
     elif data == 'menu_upgrade':
         msg = (f"💪 **Centro de Treinamento**\n\n"
                f"📊 **Seus Atributos:**\n"
@@ -603,7 +570,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"✨ **Renascimento Completo!**\nVocê agora é um {nc}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
         else: await query.answer("🚫 Gemas insuficientes!", show_alert=True)
 
-    # --- OUTROS ---
     elif data == 'menu_mailbox':
         kb = [[InlineKeyboardButton("📢 Canal Oficial", url=OFFICIAL_CHANNEL_LINK)], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
         await query.edit_message_text("✉️ **Correio Real**\nFique atento aos decretos e eventos:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
@@ -639,8 +605,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main_bot(token: str) -> Application:
     init_db()
     app = Application.builder().token(token).build()
-    
-    # Comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("cheat", admin_cheat))
     app.add_handler(CommandHandler("banir", admin_ban))
@@ -648,14 +612,10 @@ def main_bot(token: str) -> Application:
     app.add_handler(CommandHandler("ouro", admin_give))
     app.add_handler(CommandHandler("gemas", admin_give))
     app.add_handler(CommandHandler("xp", admin_give))
-    app.add_handler(CommandHandler("admin", admin_help))
     app.add_handler(CommandHandler("promote", admin_promote))
     app.add_handler(CommandHandler("demote", admin_demote))
-    
-    # Mensagens e Callbacks
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text_input))
     app.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
     app.add_handler(CallbackQueryHandler(confirm_name_handler, pattern='^confirm_name_'))
     app.add_handler(CallbackQueryHandler(handle_menu))
-    
     return app
