@@ -99,19 +99,40 @@ async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if ud.get('waiting_guild_name'):
         ud['temp_guild_name'] = update.message.text.strip()[:20]
         ud['waiting_guild_name'] = False; ud['waiting_guild_link'] = True
-        await update.message.reply_text(f"Nome: **{ud['temp_guild_name']}**\nAgora o Link do Telegram:", parse_mode='Markdown'); return
+        await update.message.reply_text(f"Nome: **{ud['temp_guild_name']}**\n\n🔗 Agora envie o **Link do Grupo Telegram**:", parse_mode='Markdown'); return
 
     if ud.get('waiting_guild_link'):
         link = update.message.text.strip()
-        if not link.startswith("https://t.me/"): await update.message.reply_text("Deve ser https://t.me/..."); return
+        if not link.startswith("https://t.me/"): await update.message.reply_text("⚠️ O link deve começar com https://t.me/..."); return
+        
         db = get_db(); p = get_player(update.effective_user.id, db)
+        
+        # --- VERIFICAÇÃO FINAL DE GEMAS ---
+        if p.gems < GUILD_CREATE_COST:
+            await update.message.reply_text(f"🚫 **Erro:** Você precisa de {GUILD_CREATE_COST} Gemas para fundar a guilda!\nSeu saldo atual: {p.gems} 💎", parse_mode='Markdown')
+            ud['waiting_guild_link'] = False
+            db.close(); return
+
         try:
             ng = Guild(name=ud['temp_guild_name'], leader_id=p.id, telegram_link=link, member_count=1)
             db.add(ng); db.commit(); db.refresh(ng)
-            p.gems -= GUILD_CREATE_COST; p.guild_id = ng.id; p.guild_role = 'lider'; p.guild_join_date = datetime.now(); db.commit()
+            
+            p.gems -= GUILD_CREATE_COST
+            p.guild_id = ng.id; p.guild_role = 'lider'; p.guild_join_date = datetime.now(); db.commit()
+            
             ud['waiting_guild_link'] = False
-            await update.message.reply_text(f"✅ Guilda **{ng.name}** (ID: `{ng.id}`) criada!", parse_mode='Markdown')
-        except: await update.message.reply_text("❌ Erro (Nome em uso?)."); db.close(); return
+            await update.message.reply_text(
+                f"✅ **Guilda Fundada com Sucesso!**\n\n"
+                f"🛡️ **{ng.name}**\n"
+                f"🆔 ID: `{ng.id}`\n"
+                f"💎 Custo: -{GUILD_CREATE_COST} Gemas\n\n"
+                f"Convide membros com `/guild {ng.id}`", 
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Erro ao criar (Nome já existe?). Tente novamente."); 
+            print(f"Erro Guilda: {e}")
+        db.close(); return
 
     dtype = ud.get('waiting_donation_type')
     if dtype:
@@ -235,10 +256,15 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith('g_act_'): await guild_execute_action(update, context)
         elif data == 'guild_send_mail': await guild_send_mail_start(update, context)
         elif data == 'guild_war_placeholder': await guild_war_placeholder(update, context)
+        
         elif data == 'guild_create_start':
-            if player.gems < GUILD_CREATE_COST: await query.answer("Gemas insuficientes!", show_alert=True); return
+            # --- VALIDAÇÃO DE GEMAS INICIAL ---
+            if player.gems < GUILD_CREATE_COST:
+                await query.answer(f"🚫 Saldo Insuficiente!\nVocê precisa de {GUILD_CREATE_COST} Gemas.", show_alert=True)
+                return
             context.user_data['waiting_guild_name'] = True
-            await query.edit_message_text("🛡️ Digite o Nome da Guilda:")
+            await query.edit_message_text(f"✨ **Criar Nova Guilda**\n\n💰 Custo: **{GUILD_CREATE_COST} Gemas**\n\n🛡️ Digite o **Nome da Guilda** no chat:", parse_mode='Markdown')
+            
         elif data == 'guild_join_start':
             top = db.query(Guild).order_by(Guild.total_rating.desc()).limit(10).all()
             kb = [[InlineKeyboardButton(f"Entrar: {g.name}", callback_data=f"join_guild_{g.id}")] for g in top if g.member_count < 50]
@@ -281,7 +307,9 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         check_level_up(player); db.commit()
         await query.edit_message_text("✅ Resgatado!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
 
-    # --- MENU DE CONSTRUÇÕES (TODAS AS 6) ---
+    elif data == 'menu_refresh': await show_main_menu(update, player)
+    
+    # --- MENUS DE CONSTRUÇÃO E UPGRADE ---
     elif data == 'menu_constructions':
         prod_h = player.farm_level * 10
         cap = player.barn_level * 100
@@ -386,7 +414,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"📜 **Pergaminho de Status**\n\n**{player.name}**\n💪 {player.strength} | 🧠 {player.intelligence}\n🛡️ {player.defense} | ⚡ {player.speed}\n\n🔗 **Recrutamento:**\n`{lnk}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
 
     elif data == 'menu_shop':
-        await query.edit_message_text("💎 **Mercado Negro VIP**\n\n🚧 Os mercadores estão viajando. (Em breve via XSolla)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
+        await query.edit_message_text("💎 **Mercado Negro VIP**\n\n🚧 Os mercadores estão viajando. (Em breve via XSolla)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
 
     elif data == 'menu_ranking':
         top = db.query(Player).order_by(Player.pvp_rating.desc()).limit(10).all()
