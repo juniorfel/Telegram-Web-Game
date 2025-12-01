@@ -122,6 +122,39 @@ async def admin_give(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await update.message.reply_text("Jogador não encontrado.")
     except: await update.message.reply_text(f"Uso: /{cmd} [ID] [QTD]")
     db.close()
+    
+async def admin_promote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Apenas o Dono Supremo (Você) pode promover outros admins
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        target_id = int(context.args[0])
+        db = get_db()
+        target = get_player(target_id, db)
+        if target:
+            target.is_admin = True
+            db.commit()
+            await update.message.reply_text(f"👑 **{target.name}** agora é um Administrador!")
+        else:
+            await update.message.reply_text("Jogador não encontrado.")
+        db.close()
+    except:
+        await update.message.reply_text("Uso: /promote [ID]")
+
+async def admin_demote(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        target_id = int(context.args[0])
+        db = get_db()
+        target = get_player(target_id, db)
+        if target:
+            target.is_admin = False
+            db.commit()
+            await update.message.reply_text(f"👇 **{target.name}** foi rebaixado a jogador comum.")
+        else:
+            await update.message.reply_text("Jogador não encontrado.")
+        db.close()
+    except:
+        await update.message.reply_text("Uso: /demote [ID]")
 
 async def admin_cheat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db = get_db()
