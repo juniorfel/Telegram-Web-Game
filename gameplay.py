@@ -172,45 +172,58 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     p = Player(id=user_id, username=update.effective_user.username, name=name, class_name=c_class,
                health=s['hp'], max_health=s['hp'], strength=s['str'], intelligence=s['int'], defense=s['def'],
                speed=s['spd'], crit_chance=s['crit'], gold=INITIAL_GOLD, level=1, xp=0)
-    db.add(p); db.commit(); db.refresh(p)
+    db.add(p); db.commit()
     
+    msg = ""
     rid = context.user_data.get('referrer_id')
     if rid:
         ref = get_player(rid, db)
         if ref:
             ref.gems += REFERRAL_GEMS_INVITER; ref.gold += REFERRAL_GOLD_INVITER
             p.gems += REFERRAL_GEMS_NEW; p.gold += REFERRAL_GOLD_NEW; db.commit()
-            try: await context.bot.send_message(chat_id=ref.id, text=f"🤝 **Novo Aliado!**\nRecompensa: {REFERRAL_GEMS_INVITER}💎 {REFERRAL_GOLD_INVITER}g")
+            msg = f"\n\n🎁 **BÔNUS AFILIADO!**"
+            try: await context.bot.send_message(chat_id=ref.id, text=f"🤝 **Novo Aliado!**\nUma nova pessoa entrou graças a você!\nVocê ganhou {REFERRAL_GEMS_INVITER}💎 e {REFERRAL_GOLD_INVITER}💰.")
             except: pass
     
     await query.answer(f"Bem-vindo, {p.name}!", show_alert=True)
     await show_main_menu(update, p)
     db.close(); context.user_data['waiting_name'] = False
 
-# --- BIG ROUTER (Handle Menu) ---
+# --- HANDLER GERAL DE MENUS ---
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     data = query.data; db = get_db()
     player = get_player(query.from_user.id, db)
-    
-    if player and player.is_banned: await query.edit_message_text("🚫 **Conta Banida.**"); db.close(); return
     if not player: return
 
-    # Battle
+    # --- LÓGICA GERAL DOS MENUS (Batalha, Guilda, Farm, etc) ---
     if data == 'menu_battle_mode':
-        pwr = (player.strength * 2) + player.intelligence + player.defense
-        msg = (f"⚔️ **Zona de Batalha**\nStatus: ❤️ {player.health}/{player.max_health} | ⚡ {player.stamina}\n⚔️ Poder: {pwr} | 🏆 Rank: {player.pvp_rating}")
-        kb = [[InlineKeyboardButton("🗺️ Campanha PVE", callback_data='battle_pve_start'), InlineKeyboardButton("🆚 Arena PVP", callback_data='battle_pvp_start')], [InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
+        power = (player.strength * 2) + player.intelligence + player.defense
+        msg = (f"⚔️ **Zona de Batalha**\n\n"
+               f"📊 **Seus Status:**\n"
+               f"❤️ HP: {player.health}/{player.max_health} | ⚡ Stamina: {player.stamina}/{player.max_stamina}\n"
+               f"⚔️ Poder: {power} | 🏆 Rank: {player.pvp_rating}\n\n"
+               f"Escolha seu destino:")
+        kb = [[InlineKeyboardButton("🗺️ Campanha PVE", callback_data='battle_pve_start'), 
+               InlineKeyboardButton("🆚 Arena PVP", callback_data='battle_pvp_start')], 
+              [InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'battle_pve_start':
-        m = generate_monster(player.current_phase_id); context.user_data['monster'] = m
-        kb = [[InlineKeyboardButton("⚔️ ATACAR (1 Stamina)", callback_data='confirm_pve')], [InlineKeyboardButton("🔙 Recuar", callback_data='menu_battle_mode')]]
-        await query.edit_message_text(f"🗺️ **Fase {player.current_phase_id}**\n🔥 **{m['name']}**\n❤️ HP: {m['hp']} | ⚡ {m['spd']}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        m = generate_monster(player.current_phase_id)
+        context.user_data['monster'] = m
+        msg = (f"🗺️ **Campanha: Fase {player.current_phase_id}**\n\n"
+               f"🔥 **Inimigo:** {m['name']}\n"
+               f"❤️ HP: {m['hp']} | ⚡ Spd: {m['spd']}\n"
+               f"💰 Recompensa: {m['gold']}g | ✨ {m['xp']}xp")
+        kb = [[InlineKeyboardButton("⚔️ ATACAR (1 Stamina)", callback_data='confirm_pve')], 
+              [InlineKeyboardButton("🔙 Recuar", callback_data='menu_battle_mode')]]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'confirm_pve':
         if player.stamina < STAMINA_COST: await query.answer("⚡ Exausto!", show_alert=True); return
-        player.stamina -= STAMINA_COST; m = context.user_data.get('monster')
+        player.stamina -= STAMINA_COST
+        m = context.user_data.get('monster')
         win = random.random() < 0.6
         if win:
             player.gold += m['gold']; player.xp += m['xp']; player.current_phase_id += 1; check_level_up(player)
@@ -238,14 +251,13 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.commit()
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Continuar", callback_data='menu_battle_mode')]]), parse_mode='Markdown')
 
-    # Guilda
     elif data == 'menu_guild':
         if player.guild_id:
             g = db.query(Guild).filter(Guild.id == player.guild_id).first()
             kb = [[InlineKeyboardButton("💬 Grupo", url=g.telegram_link)],
-                  [InlineKeyboardButton("💰 Doar Ouro", callback_data='donate_start_gold'), InlineKeyboardButton("💎 Doar Gemas", callback_data='donate_start_gems')],
+                  [InlineKeyboardButton("💰 Doar", callback_data='donate_start_gold'), InlineKeyboardButton("💎 Doar Gemas", callback_data='donate_start_gems')],
                   [InlineKeyboardButton("🚪 Sair", callback_data='guild_leave')], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
-            await query.edit_message_text(f"🛡️ **{g.name}**\n💰 Cofre: {g.treasury_gold}g | {g.treasury_gems}💎", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+            await query.edit_message_text(f"🛡️ **{g.name}**\n💰 {g.treasury_gold}g | 💎 {g.treasury_gems}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         else:
             kb = [[InlineKeyboardButton("🔎 Listar", callback_data='guild_join_start'), InlineKeyboardButton("🔎 Buscar", callback_data='guild_search_manual')],
                   [InlineKeyboardButton(f"✨ Fundar ({GUILD_CREATE_COST} Gemas)", callback_data='guild_create_start')], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
@@ -255,59 +267,45 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         top = db.query(Guild).order_by(Guild.total_rating.desc()).limit(10).all()
         kb = []
         for g in top:
-            if g.member_count < 50: kb.append([InlineKeyboardButton(f"{g.name} ({g.member_count}/50)", callback_data=f"join_guild_{g.id}")])
+            if g.member_count < 50: kb.append([InlineKeyboardButton(f"{g.name}", callback_data=f"join_guild_{g.id}")])
         kb.append([InlineKeyboardButton("🔙", callback_data='menu_guild')])
         await query.edit_message_text("Guildas:", reply_markup=InlineKeyboardMarkup(kb))
 
-    elif data == 'guild_search_manual':
-        context.user_data['waiting_guild_search'] = True
-        await query.edit_message_text("🔎 Digite Nome/ID:", parse_mode='Markdown')
-
     elif data.startswith('join_guild_'):
         gid = int(data.split('_')[2]); g = db.query(Guild).filter(Guild.id == gid).first()
-        if g and g.member_count < 50:
-            player.guild_id = g.id; g.member_count += 1; db.commit(); await query.answer("Entrou!")
-            await handle_menu(update, context) # Refresh
-        else: await query.answer("Erro.", show_alert=True)
+        if g: player.guild_id = g.id; g.member_count += 1; db.commit(); await query.answer("Entrou!")
+        await handle_menu(update, context)
 
     elif data == 'guild_create_start':
-        if player.level < GUILD_MIN_LEVEL: await query.answer("Nível baixo!", show_alert=True); return
-        if player.gems < GUILD_CREATE_COST: await query.answer("Gemas insuficientes!", show_alert=True); return
+        if player.gems < GUILD_CREATE_COST: await query.answer("Sem gemas!", show_alert=True); return
         context.user_data['waiting_guild_name'] = True
         await query.edit_message_text("Nome da Guilda:")
 
     elif data == 'guild_leave':
         g = db.query(Guild).filter(Guild.id == player.guild_id).first()
-        g.member_count -= 1; player.guild_id = None; db.commit()
+        if g: g.member_count -= 1; player.guild_id = None; db.commit()
         await query.edit_message_text("Saiu.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
 
     elif data.startswith('donate_start_'):
         context.user_data['waiting_donation_type'] = data.split('_')[-1]
         await query.edit_message_text("Digite valor:")
 
-    # Construcoes
     elif data == 'menu_constructions':
-        msg = (f"🏗️ **Construções**\n🌾 Fazenda: Lvl {player.farm_level}\n🏚️ Celeiro: Lvl {player.barn_level}\n⚔️ Quartel: Lvl {player.barracks_level}\n🔮 Academia: Lvl {player.academy_level}\n🏃 Pista: Lvl {player.track_level}\n❤️ Clínica: Lvl {player.clinic_level}")
         kb = [[InlineKeyboardButton("Fazenda", callback_data='constr_fazenda'), InlineKeyboardButton("Quartel", callback_data='constr_quartel')],
               [InlineKeyboardButton("Academia", callback_data='constr_academia'), InlineKeyboardButton("Pista", callback_data='constr_pista')],
               [InlineKeyboardButton("Clínica", callback_data='constr_clinica'), InlineKeyboardButton("Celeiro", callback_data='constr_celeiro')],
               [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await query.edit_message_text("Construções:", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data.startswith('constr_') or data.startswith('upgrade_'):
-        B = {'fazenda': {'a':'farm_level', 'c':500, 'd':'Produz Trigo'}, 'celeiro': {'a':'barn_level', 'c':500, 'd':'Estoque'},
-             'quartel': {'a':'barracks_level', 'c':2000, 'd':'Força'}, 'academia': {'a':'academy_level', 'c':1500, 'd':'Inteligência'},
-             'pista': {'a':'track_level', 'c':2500, 'd':'Velocidade'}, 'clinica': {'a':'clinic_level', 'c':3000, 'd':'Cura'}}
-        k = data.split('_')[1]; c = B[k]; lvl = getattr(player, c['a']); cost = int(c['c']*(1.5**lvl))
-        
+        key = data.split('_')[1]; B = {'fazenda': 'farm_level', 'quartel': 'barracks_level', 'academia': 'academy_level', 'pista': 'track_level', 'clinica': 'clinic_level', 'celeiro': 'barn_level'}
+        if key not in B: await query.answer("Em breve!"); return
+        attr = B[key]; lvl = getattr(player, attr)
         if data.startswith('upgrade_'):
-            if player.gold >= cost: player.gold -= cost; setattr(player, c['a'], lvl+1); db.commit(); await query.answer("Up!"); lvl+=1; cost = int(c['c']*(1.5**lvl))
+            if player.gold >= 500: player.gold -= 500; setattr(player, attr, lvl+1); db.commit(); await query.answer("Sucesso!"); lvl+=1
             else: await query.answer("Sem ouro!")
-        
-        kb = [[InlineKeyboardButton(f"⬆️ Melhorar ({cost}g)", callback_data=f'upgrade_{k}')]]
-        if k == 'fazenda' and lvl > 0: kb.insert(0, [InlineKeyboardButton("💰 Vender", callback_data='farm_harvest')])
-        kb.append([InlineKeyboardButton("🔙", callback_data='menu_constructions')])
-        await query.edit_message_text(f"🏗️ **{k.capitalize()}** Lvl {lvl}\n_{c['d']}_", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        kb = [[InlineKeyboardButton("⬆️ Upar (500g)", callback_data=f'upgrade_{key}')], [InlineKeyboardButton("🔙", callback_data='menu_constructions')]]
+        await query.edit_message_text(f"{key.capitalize()} Lvl {lvl}", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == 'farm_harvest':
         now = datetime.now(); el = (now - player.last_farm_harvest).total_seconds()/3600
@@ -316,15 +314,14 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await query.answer("Vazio.")
         await handle_menu(update, context)
 
-    # Upgrade/Respec
     elif data == 'menu_upgrade':
-        kb = [[InlineKeyboardButton(f"💪 Treinar ({int(50+player.strength*20)}g)", callback_data='up_str')],
+        c = 100
+        kb = [[InlineKeyboardButton(f"Força +1 ({c}g)", callback_data='up_str')],
               [InlineKeyboardButton(f"🔄 Mudar Classe ({RESPEC_COST}g)", callback_data='respec_start')], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
-        await query.edit_message_text(f"💪 **Treino**\nForça: {player.strength}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await query.edit_message_text(f"Força: {player.strength}", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == 'up_str':
-        c = int(50+player.strength*20)
-        if player.gold >= c: player.gold -= c; player.strength += 1; db.commit(); await query.answer("Up!")
+        if player.gold >= 100: player.gold -= 100; player.strength += 1; db.commit(); await query.answer("Up!")
         else: await query.answer("Sem ouro!")
         await handle_menu(update, context)
 
@@ -344,7 +341,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"Nova classe: {nc}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
         else: await query.answer("Gemas insuficientes!")
 
-    # Outros
     elif data == 'menu_mailbox':
         kb = [[InlineKeyboardButton("Canal", url=OFFICIAL_CHANNEL_LINK)], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
         await query.edit_message_text("Correio:", reply_markup=InlineKeyboardMarkup(kb))
@@ -375,25 +371,3 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(update, player)
 
     db.close()
-
-# --- ARQUIVO 5: bot.py ---
-def main_bot(token: str) -> Application:
-    init_db()
-    app = Application.builder().token(token).build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("cheat", admin_cheat))
-    app.add_handler(CommandHandler("banir", admin_ban))
-    app.add_handler(CommandHandler("conta", admin_delete))
-    app.add_handler(CommandHandler("ouro", admin_give))
-    app.add_handler(CommandHandler("gemas", admin_give))
-    app.add_handler(CommandHandler("xp", admin_give))
-    app.add_handler(CommandHandler("promote", admin_promote))
-    app.add_handler(CommandHandler("demote", admin_demote))
-    
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text_input))
-    app.add_handler(CallbackQueryHandler(handle_class_selection, pattern='^class_'))
-    app.add_handler(CallbackQueryHandler(confirm_name_handler, pattern='^confirm_name_'))
-    app.add_handler(CallbackQueryHandler(handle_menu))
-    
-    return app
