@@ -107,6 +107,7 @@ async def receive_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         db = get_db(); p = get_player(update.effective_user.id, db)
         
+        # --- VERIFICAÇÃO FINAL DE GEMAS ---
         if p.gems < GUILD_CREATE_COST:
             await update.message.reply_text(f"🚫 **Erro:** Você precisa de {GUILD_CREATE_COST} Gemas para fundar a guilda!\nSeu saldo atual: {p.gems} 💎", parse_mode='Markdown')
             ud['waiting_guild_link'] = False
@@ -163,15 +164,16 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer(f"Bem-vindo!", show_alert=True); await show_main_menu(update, p); db.close()
 
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; await query.answer(); data = query.data; db = get_db()
+    query = update.callback_query; data = query.data; db = get_db()
     player = get_player(query.from_user.id, db)
-    if not player: return
+    if not player: await query.answer(); return
 
     # --- MENU DE BATALHA (MOSTRANDO STAMINA) ---
     if data == 'menu_battle_mode':
+        await query.answer()
         st = get_total_stats(player) # Mostra stats reais
         msg = (f"⚔️ **Zona de Batalha**\n\n"
-               f"⚡ **Stamina: {player.stamina}/{player.max_stamina}**\n" # <--- MOSTRANDO CLARAMENTE
+               f"⚡ **Stamina: {player.stamina}/{player.max_stamina}**\n" 
                f"📊 **Atributos:**\n"
                f"💪 {st['str']} | 🧠 {st['int']} | 🛡️ {st['def']}\n"
                f"💨 {st['spd']} | ❤️ {st['hp']}\n"
@@ -182,25 +184,33 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'battle_pve_start':
+        await query.answer()
         m = generate_monster(player.current_phase_id)
         context.user_data['monster'] = m
         msg = (f"🗺️ **Campanha: Fase {player.current_phase_id}**\n\n"
-               f"⚡ **Sua Stamina: {player.stamina}/{player.max_stamina}**\n\n" # <--- MOSTRANDO
+               f"⚡ **Sua Stamina: {player.stamina}/{player.max_stamina}**\n\n"
                f"🔥 {m['name']}\n❤️ HP: {m['hp']} | ⚡ Spd: {m['spd']}\n💰 {m['gold']}g | ✨ {m['xp']}xp")
         kb = [[InlineKeyboardButton("⚔️ ATACAR (1 Stamina)", callback_data='confirm_pve')], [InlineKeyboardButton("🔙", callback_data='menu_battle_mode')]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'confirm_pve':
         if player.stamina < STAMINA_COST: 
-            await query.answer(f"🚫 Sem Stamina! Você tem {player.stamina}/{STAMINA_COST}.", show_alert=True) # <--- AVISO CLARO
+            # --- MUDANÇA AQUI: MENSAGEM NO CHAT ---
+            await query.answer()
+            await query.message.reply_text(
+                f"🚫 **SEM STAMINA!**\n\nVocê está muito cansado para lutar.\nStamina atual: {player.stamina}/{player.max_stamina}\n\nAguarde recuperar ou use uma poção.", 
+                parse_mode='Markdown'
+            )
             return
         
+        await query.answer()
         m = context.user_data.get('monster')
         
         # Gate de Boss
         st = get_total_stats(player)
         if m['is_boss'] and (st['str'] + st['int'] + st['def']) < (player.current_phase_id * 5):
-            await query.answer("Muito fraco para o Boss!", show_alert=True); return
+            await query.message.reply_text("🚫 **MUITO FRACO!**\nVocê não tem poder suficiente para desafiar este Boss.\nMelhore seus atributos!", parse_mode='Markdown')
+            return
 
         player.stamina -= STAMINA_COST
         
@@ -220,6 +230,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'battle_pvp_start':
+        await query.answer()
         rating_range = 200; min_r = max(0, player.pvp_rating - rating_range); max_r = player.pvp_rating + rating_range
         opps = db.query(Player).filter(Player.id != player.id, Player.pvp_rating >= min_r, Player.pvp_rating <= max_r).order_by(func.random()).limit(4).all()
         if not opps: opps = db.query(Player).filter(Player.id != player.id).order_by(func.random()).limit(4).all()
@@ -232,6 +243,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"⚔️ **Arena PvP**\n⚡ **Stamina: {player.stamina}/{player.max_stamina}**\nSeus Pontos: {player.pvp_rating}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data.startswith('pre_fight_'):
+        await query.answer()
         oid = int(data.split('_')[2]); opp = db.query(Player).filter(Player.id == oid).first()
         context.user_data['opponent_id'] = opp.id
         kb = [[InlineKeyboardButton("⚔️ LUTAR (1 Stamina)", callback_data='confirm_pvp')], [InlineKeyboardButton("🔙", callback_data='battle_pvp_start')]]
@@ -239,9 +251,15 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == 'confirm_pvp':
         if player.stamina < STAMINA_COST:
-            await query.answer(f"🚫 Sem Stamina! Você tem {player.stamina}/{STAMINA_COST}.", show_alert=True) # <--- AVISO CLARO
+            # --- MUDANÇA AQUI: MENSAGEM NO CHAT ---
+            await query.answer()
+            await query.message.reply_text(
+                f"🚫 **SEM STAMINA!**\n\nVocê está exausto de tanto lutar.\nStamina atual: {player.stamina}/{player.max_stamina}", 
+                parse_mode='Markdown'
+            )
             return
             
+        await query.answer()
         opp = db.query(Player).filter(Player.id == context.user_data.get('opponent_id')).first()
         player.stamina -= STAMINA_COST
         winner = simulate_pvp_battle(player, opp)
@@ -268,19 +286,22 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == 'guild_war_placeholder': await guild_war_placeholder(update, context)
         
         elif data == 'guild_create_start':
+            await query.answer()
             # --- VALIDAÇÃO DE GEMAS INICIAL ---
             if player.gems < GUILD_CREATE_COST:
-                await query.answer(f"🚫 Saldo Insuficiente!\nVocê precisa de {GUILD_CREATE_COST} Gemas.", show_alert=True)
+                await query.message.reply_text(f"🚫 **Saldo Insuficiente!**\n\nVocê precisa de {GUILD_CREATE_COST} Gemas para criar uma guilda.\nSeu saldo: {player.gems} 💎", parse_mode='Markdown')
                 return
             context.user_data['waiting_guild_name'] = True
             await query.edit_message_text(f"✨ **Criar Nova Guilda**\n\n💰 Custo: **{GUILD_CREATE_COST} Gemas**\n\n🛡️ Digite o **Nome da Guilda** no chat:", parse_mode='Markdown')
             
         elif data == 'guild_join_start':
+            await query.answer()
             top = db.query(Guild).order_by(Guild.total_rating.desc()).limit(10).all()
             kb = [[InlineKeyboardButton(f"Entrar: {g.name}", callback_data=f"join_guild_{g.id}")] for g in top if g.member_count < 50]
             kb.append([InlineKeyboardButton("🔙", callback_data='menu_guild')])
             await query.edit_message_text("📜 **Guildas:**", reply_markup=InlineKeyboardMarkup(kb))
         elif data.startswith('join_guild_'):
+            await query.answer()
             gid = int(data.split('_')[2]); g = db.query(Guild).filter(Guild.id == gid).first()
             if g.member_count < 50:
                 player.guild_id = g.id; player.guild_role = 'membro'; player.guild_join_date = datetime.now()
@@ -288,21 +309,25 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(f"✅ Bem-vindo a {g.name}!")
             else: await query.answer("Lotada.", show_alert=True)
         elif data == 'guild_leave':
-            if player.guild_role == 'lider': await query.answer("Líder não pode sair.", show_alert=True)
+            await query.answer()
+            if player.guild_role == 'lider': await query.message.reply_text("🚫 Líder não pode sair! Transfira a liderança primeiro.")
             else:
                 g = db.query(Guild).filter(Guild.id == player.guild_id).first()
                 g.member_count -= 1; player.guild_id = None; player.guild_role = 'membro'
                 db.commit(); await query.edit_message_text("Saiu da guilda.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
 
     elif data.startswith('donate_start_'):
+        await query.answer()
         context.user_data['waiting_donation_type'] = data.split('_')[-1]
         await query.edit_message_text("🏦 Quanto quer doar?")
 
     elif data == 'donate_menu':
+        await query.answer()
         kb = [[InlineKeyboardButton("💰 Doar Ouro", callback_data='donate_start_gold'), InlineKeyboardButton("💎 Doar Gemas", callback_data='donate_start_gems')], [InlineKeyboardButton("🔙", callback_data='menu_guild')]]
         await query.edit_message_text("🏦 **Cofre da Guilda**\nEscolha o recurso:", reply_markup=InlineKeyboardMarkup(kb))
 
     elif data == 'menu_daily':
+        await query.answer()
         now = datetime.now()
         if (now - player.last_daily_claim) > timedelta(hours=24):
             g = db.query(Guild).filter(Guild.id == player.guild_id).first() if player.guild_id else None
@@ -311,16 +336,20 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await query.edit_message_text("⏳ Volte amanhã.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
 
     elif data == 'daily_claim_now':
+        await query.answer()
         g = db.query(Guild).filter(Guild.id == player.guild_id).first() if player.guild_id else None
         gold, xp, gems, _ = calculate_daily_bonus(player, g)
         player.gold += gold; player.xp += xp; player.gems += gems; player.last_daily_claim = datetime.now(); player.stamina = player.max_stamina
         check_level_up(player); db.commit()
         await query.edit_message_text("✅ Resgatado!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
 
-    elif data == 'menu_refresh': await show_main_menu(update, player)
+    elif data == 'menu_refresh': 
+        await query.answer()
+        await show_main_menu(update, player)
     
     # --- MENUS DE CONSTRUÇÃO E UPGRADE ---
     elif data == 'menu_constructions':
+        await query.answer()
         prod_h = player.farm_level * 10
         cap = player.barn_level * 100
         msg = (f"🏗️ **Distrito de Construções**\n\n"
@@ -350,13 +379,14 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conf = B.get(key)
         
         if conf:
+            await query.answer()
             lvl = getattr(player, conf['a'])
             cost = int(conf['c'] * (1.5 ** lvl))
             
             if data.startswith('upgrade_'):
                 if player.gold >= cost:
                     player.gold -= cost; setattr(player, conf['a'], lvl+1); db.commit()
-                    await query.answer("🔨 Construção Melhorada!"); lvl += 1; cost = int(conf['c'] * (1.5 ** lvl))
+                    await query.answer("🔨 Construção Melhorada!", show_alert=True); lvl += 1; cost = int(conf['c'] * (1.5 ** lvl))
                 else: await query.answer("🚫 Ouro insuficiente!", show_alert=True)
 
             kb = [[InlineKeyboardButton(f"⬆️ Melhorar (Custo: {cost}g)", callback_data=f'upgrade_{key}')]]
@@ -366,16 +396,18 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"🏗️ **{key.capitalize()}** (Nível {lvl})\n_{conf['d']}_", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'farm_harvest':
+        await query.answer()
         now = datetime.now(); elapsed = (now - player.last_farm_harvest).total_seconds() / 3600
         amount = int(elapsed * player.farm_level * 100)
         if amount > 0:
             player.gold += amount; player.last_farm_harvest = now; db.commit()
-            await query.answer(f"💰 Vendeu por {amount}g!")
-        else: await query.answer("🌾 Colheita vazia.")
+            await query.answer(f"💰 Vendeu por {amount}g!", show_alert=True)
+        else: await query.answer("🌾 Colheita vazia.", show_alert=True)
         await handle_menu(update, context)
 
     # --- MENUS RESTANTES (UPGRADE, RANKING, ETC) ---
     elif data == 'menu_upgrade':
+        await query.answer()
         msg = (f"💪 **Centro de Treinamento**\n\n"
                f"📊 **Seus Atributos:**\n"
                f"💪 Força: {player.strength}\n"
@@ -395,11 +427,12 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c = int(50 + (player.strength * 20))
         if player.gold >= c:
             player.gold -= c; player.strength += 1; db.commit()
-            await query.answer("💪 +1 Força!")
+            await query.answer("💪 +1 Força!", show_alert=True)
             await handle_menu(update, context)
         else: await query.answer("🚫 Ouro insuficiente!", show_alert=True)
 
     elif data == 'respec_start':
+        await query.answer()
         kb = []; row = []
         for c in VALID_CLASSES:
             row.append(InlineKeyboardButton(c, callback_data=f'respec_{c}'))
@@ -412,26 +445,33 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if player.gems >= RESPEC_COST:
             nc = data.split('_')[1]; s = BASE_STATS[nc]
             player.gems -= RESPEC_COST; player.class_name = nc; player.strength = s['str']; player.defense = s['def']; player.intelligence = s['int']; player.health = player.max_health; db.commit()
+            await query.answer("Renascimento Completo!", show_alert=True)
             await query.edit_message_text(f"✨ **Renascimento Completo!**\nVocê agora é um {nc}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
         else: await query.answer("🚫 Gemas insuficientes!", show_alert=True)
 
     elif data == 'menu_mailbox':
+        await query.answer()
         kb = [[InlineKeyboardButton("📢 Canal Oficial", url=OFFICIAL_CHANNEL_LINK)], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
         await query.edit_message_text("✉️ **Correio Real**\nFique atento aos decretos e eventos:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'menu_info':
+        await query.answer()
         lnk = f"https://t.me/{BOT_USERNAME}?start={player.id}"
         await query.edit_message_text(f"📜 **Pergaminho de Status**\n\n**{player.name}**\n💪 {player.strength} | 🧠 {player.intelligence}\n🛡️ {player.defense} | ⚡ {player.speed}\n\n🔗 **Recrutamento:**\n`{lnk}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
 
     elif data == 'menu_shop':
+        await query.answer()
         await query.edit_message_text("💎 **Mercado Negro VIP**\n\n🚧 Os mercadores estão viajando. (Em breve via XSolla)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
 
     elif data == 'menu_ranking':
+        await query.answer()
         top = db.query(Player).order_by(Player.pvp_rating.desc()).limit(10).all()
         txt = "🏆 **Salão da Fama**\n" + "\n".join([f"#{i+1} {p.name} ({p.pvp_rating} Pts)" for i, p in enumerate(top)])
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
 
-    elif data == 'menu_refresh': await show_main_menu(update, player)
+    elif data == 'menu_refresh': 
+        await query.answer()
+        await show_main_menu(update, player)
     
     db.close()
 
