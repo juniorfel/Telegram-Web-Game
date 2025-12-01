@@ -1,9 +1,11 @@
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from database import init_db
+# Agora importamos o router e as funcoes principais de gameplay
 from gameplay import (
     start, receive_text_input, handle_class_selection, confirm_name_handler, handle_menu,
     get_my_id, join_guild_command
 )
+# (Admin mantido)
 from admin import (
     admin_cheat, admin_ban, admin_delete, admin_give, admin_promote, admin_demote
 )
