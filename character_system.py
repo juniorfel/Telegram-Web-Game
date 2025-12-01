@@ -1,11 +1,12 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from database import Player
-from utils import get_db, get_player, format_number, apply_passive_healing, check_level_up, calculate_daily_bonus
+from utils import get_db, get_player, format_number, apply_passive_healing, check_level_up, calculate_daily_bonus, calculate_daily_values
 from config import BASE_STATS, VALID_CLASSES, INITIAL_GOLD, RESPEC_COST, BOT_USERNAME
 import random
 from datetime import datetime, timedelta
 
+# ... (start, handle_class_selection, confirm_name_handler MANTIDOS IGUAIS) ...
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user; db = get_db()
     player = get_player(user.id, db)
@@ -19,7 +20,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"✨ **Bem-vindo!**\nEscolha:\n{summary}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     else:
         apply_passive_healing(player, db); db.commit()
-        # PRECISA IMPORTAR show_main_menu DE GAMEPLAY (Evitar ciclo com import dentro da função)
         from gameplay import show_main_menu
         await show_main_menu(update, player)
     db.close()
@@ -48,6 +48,7 @@ async def confirm_name_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     from gameplay import show_main_menu
     await show_main_menu(update, p)
 
+# ... (menu_upgrade, handle_train_view, handle_stat_upgrade_action MANTIDOS IGUAIS) ...
 async def menu_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; db = get_db(); player = get_player(query.from_user.id, db)
     msg = (f"💪 **Centro de Treinamento**\n📊 Seus Atributos:\n"
@@ -56,7 +57,7 @@ async def menu_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("💪 Força", callback_data='train_str'), InlineKeyboardButton("🧠 Inteligência", callback_data='train_int')],
           [InlineKeyboardButton("🛡️ Defesa", callback_data='train_def'), InlineKeyboardButton("⚡ Velocidade", callback_data='train_spd')],
           [InlineKeyboardButton("💥 Crítico", callback_data='train_crit')],
-          [InlineKeyboardButton("🔄 Reencarnar", callback_data='respec_start'), InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
+          [InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown'); db.close()
 
 async def handle_train_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -65,7 +66,6 @@ async def handle_train_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     smap = {'str': 'strength', 'int': 'intelligence', 'def': 'defense', 'spd': 'speed', 'crit': 'crit_chance'}
     curr = getattr(player, smap[stat_key])
-    
     cost_1 = int(50 + (curr * 20))
     cost_10 = 0; temp = curr
     for _ in range(10): cost_10 += int(50 + (temp * 20)); temp += 1
@@ -78,10 +78,8 @@ async def handle_train_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_stat_upgrade_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; parts = query.data.split('_'); key = parts[1]; qty = int(parts[2])
     db = get_db(); player = get_player(query.from_user.id, db)
-    
     smap = {'str': 'strength', 'int': 'intelligence', 'def': 'defense', 'spd': 'speed', 'crit': 'crit_chance'}
     curr = getattr(player, smap[key])
-    
     total = 0; temp = curr
     for _ in range(qty): total += int(50 + (temp * 20)); temp += 1
     
@@ -94,27 +92,60 @@ async def handle_stat_upgrade_action(update: Update, context: ContextTypes.DEFAU
         await query.message.reply_text(f"🚫 **FALTA OURO!**\nCusto: {total}g\nTem: {player.gold}g", parse_mode='Markdown')
     db.close()
 
+# ... (menu_daily, daily_claim_now MANTIDOS IGUAIS - COM LÓGICA DE STREAK) ...
 async def menu_daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; db = get_db(); player = get_player(query.from_user.id, db)
-    if (datetime.now() - player.last_daily_claim) > timedelta(hours=24):
-        from database import Guild # Local import
-        g = db.query(Guild).filter(Guild.id == player.guild_id).first() if player.guild_id else None
-        gold, xp, gems, b_msg = calculate_daily_bonus(player, g)
-        await query.edit_message_text(f"🎁 **Diário**\n💰 {gold}\n✨ {xp} {f'| 💎 {gems}' if gems else ''}{b_msg}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Receber", callback_data='daily_claim_now')]]), parse_mode='Markdown')
-    else: await query.edit_message_text("⏳ Volte amanhã.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
-    db.close()
+    now = datetime.now(); collected_today = (now - player.last_daily_claim) < timedelta(hours=24)
+    from database import Guild
+    g = db.query(Guild).filter(Guild.id == player.guild_id).first() if player.guild_id else None
+    
+    # Usa calculate_daily_values que criamos na ultima resposta
+    # Se der erro aqui, certifique-se que copiou o utils.py novo
+    gold, xp, gems, streak, is_double = calculate_daily_values(player, g)
+    
+    days_to_bonus = 7 - (streak % 7); bonus_text = "🔥 **HOJE É O DIA DO BÔNUS (2x)!** 🔥" if is_double else f"💎 Bônus 2x em: {days_to_bonus} dias"
+    
+    if collected_today:
+        rem = 24 - int((now - player.last_daily_claim).total_seconds() / 3600)
+        status = f"✅ **JÁ COLETADO!**\nVolte em {rem} horas."
+        kb = [[InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
+    else:
+        status = f"🎁 **DISPONÍVEL!**"; kb = [[InlineKeyboardButton("💰 RECEBER AGORA", callback_data='daily_claim_now')], [InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
+
+    msg = (f"{status}\n\n📅 **Streak:** {player.daily_streak} dias\n{bonus_text}\n\n💰 {gold} Ouro\n✨ {xp} XP\n💎 {gems} Gemas")
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown'); db.close()
 
 async def daily_claim_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; db = get_db(); player = get_player(query.from_user.id, db)
+    if (datetime.now() - player.last_daily_claim) < timedelta(hours=24): await query.answer("Já coletou!", show_alert=True); db.close(); return
     from database import Guild
     g = db.query(Guild).filter(Guild.id == player.guild_id).first() if player.guild_id else None
-    gold, xp, gems, _ = calculate_daily_bonus(player, g)
-    player.gold += gold; player.xp += xp; player.gems += gems; player.last_daily_claim = datetime.now(); player.stamina = player.max_stamina
+    gold, xp, gems, new_streak, is_double = calculate_daily_values(player, g)
+    
+    player.gold += gold; player.xp += xp; player.gems += gems
+    player.last_daily_claim = datetime.now(); player.daily_streak = new_streak; player.stamina = player.max_stamina
     check_level_up(player); db.commit()
-    await query.edit_message_text("✅ Resgatado!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]))
-    db.close()
+    msg_double = " 🔥 **BÔNUS DUPLO!**" if is_double else ""
+    await query.edit_message_text(f"✅ **Recebido!**{msg_double}\nVolte amanhã!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown'); db.close()
 
+# --- INFO ATUALIZADO (ID + INDICADOS) ---
 async def menu_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; db = get_db(); player = get_player(query.from_user.id, db)
     lnk = f"https://t.me/{BOT_USERNAME}?start={player.id}"
-    await query.edit_message_text(f"📜 **Perfil**\n**{player.name}**\n💪 {player.strength} | 🧠 {player.intelligence}\n🛡️ {player.defense} | ⚡ {player.speed}\n\n🔗 **Recrutamento:**\n`{lnk}`", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown'); db.close()
+    
+    # ATUALIZAÇÃO AQUI
+    msg = (f"📜 **Ficha de Personagem**\n\n"
+           f"🆔 **ID:** `{player.id}`\n"
+           f"👥 **Indicados:** {player.referral_count}\n\n"
+           f"👤 **{player.name}**\n"
+           f"🎭 Classe: {player.class_name}\n"
+           f"🏅 Nível: {player.level}\n\n"
+           f"⚔️ **Atributos:**\n"
+           f"💪 {player.strength} | 🧠 {player.intelligence}\n"
+           f"🛡️ {player.defense} | ⚡ {player.speed}\n\n"
+           f"🔗 **Link de Convite:**\n`{lnk}`")
+           
+    kb = [[InlineKeyboardButton("🔄 Reencarnar (Mudar Classe)", callback_data='respec_start')],
+          [InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
+          
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown'); db.close()
