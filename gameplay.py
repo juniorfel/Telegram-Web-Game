@@ -55,20 +55,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
             await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         else:
-            # Removemos a mensagem de cura, pois HP não gasta mais
             apply_passive_healing(player, db) 
             db.commit()
             await show_main_menu(update, player)
     finally: db.close()
 
 async def show_main_menu(update: Update, player: Player):
-    # Precisamos de uma nova sessão para garantir contagem atualizada do Rank
     db = get_db()
     try:
-        # Recarrega o player desta sessão para evitar erros de detach
         p = db.query(Player).filter(Player.id == player.id).first()
         
-        # --- CÁLCULO DO RANKING ---
+        # --- CÁLCULO DO RANKING (Pontos) ---
         rank_pos = db.query(Player).filter(Player.pvp_rating > p.pvp_rating).count() + 1
         
         keyboard = get_main_keyboard()
@@ -79,7 +76,7 @@ async def show_main_menu(update: Update, player: Player):
         safe_name = str(p.name).replace("_", " ").replace("*", "").replace("`", "") if p.name else "Herói"
         
         text = (f"**{safe_name}** (Lvl {lvl} {p.class_name})\n"
-                f"🏆 **Rank Global:** #{rank_pos} ({p.pvp_rating} pts)\n"
+                f"🏆 **Rank Global:** #{rank_pos} ({p.pvp_rating} Pontos)\n"
                 f"Exp: {format_number(xp)}/{format_number(needed)} ({perc:.1f}%)\n"
                 f"❤️ HP Base: {p.max_health}\n"
                 f"⚡ Stamina: {p.stamina}/{p.max_stamina}\n"
@@ -218,23 +215,49 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
               [InlineKeyboardButton("🔙 Voltar", callback_data='menu_refresh')]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
+    # --- PVE / CAMPANHA ---
     elif data == 'battle_pve_start':
         m = generate_monster(player.current_phase_id)
         context.user_data['monster'] = m
-        msg = (f"🗺️ **Campanha: Fase {player.current_phase_id}**\n\n"
+        
+        # Aviso se for Boss
+        boss_warn = "\n⚠️ **ALERTA DE CHEFE!**" if m['is_boss'] else ""
+        
+        msg = (f"🗺️ **Campanha: Fase {player.current_phase_id}**{boss_warn}\n\n"
                f"🔥 **Inimigo:** {m['name']}\n"
                f"❤️ HP: {m['hp']} | ⚡ Spd: {m['spd']}\n"
                f"💰 Recompensa: {m['gold']}g | ✨ {m['xp']}xp")
+        
         kb = [[InlineKeyboardButton("⚔️ ATACAR (1 Stamina)", callback_data='confirm_pve')], 
               [InlineKeyboardButton("🔙 Recuar", callback_data='menu_battle_mode')]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
     elif data == 'confirm_pve':
         if player.stamina < STAMINA_COST: await query.answer("⚡ Exausto!", show_alert=True); return
-        player.stamina -= STAMINA_COST
-        m = context.user_data.get('monster')
         
-        # LÓGICA PVE
+        m = context.user_data.get('monster')
+        if not m: await handle_menu(update, context); return
+        
+        # --- LÓGICA DE GATE DE BOSS (OPÇÃO 3) ---
+        if m['is_boss']:
+            # Poder necessário = Fase * 5 (Ex: Fase 10 precisa de 50 stats totais)
+            total_stats = player.strength + player.defense + player.intelligence
+            required = player.current_phase_id * 5
+            
+            if total_stats < required:
+                await query.answer(f"🚫 MUITO FRACO! Precisa de {required} status totais.", show_alert=True)
+                msg = (f"🔒 **O Guardião bloqueia sua passagem!**\n\n"
+                       f"O {m['name']} ri da sua fraqueza.\n"
+                       f"Seu Poder: {total_stats}\n"
+                       f"Necessário: {required}\n\n"
+                       f"Vá treinar no menu 'Upgrade'!")
+                kb = [[InlineKeyboardButton("💪 Ir Treinar", callback_data='menu_upgrade'), InlineKeyboardButton("🔙 Voltar", callback_data='menu_battle_mode')]]
+                await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+                return
+
+        player.stamina -= STAMINA_COST
+        
+        # LÓGICA DE BATALHA
         p_pow = (player.strength * 2) + player.intelligence + player.defense
         m_pow = m['atk'] + m['def'] + m['hp'] / 10
         
@@ -243,39 +266,48 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if random.random() < chance:
             player.gold += m['gold']; player.xp += m['xp']; player.current_phase_id += 1; check_level_up(player)
-            msg = f"⚔️ **Vitória Gloriosa!**\nO inimigo caiu.\nSaque: +{m['gold']}g | +{m['xp']}xp"
+            
+            # --- LÓGICA DE DROPS RAROS (OPÇÃO 2) ---
+            loot_msg = ""
+            if random.random() < 0.10: # 10% de chance
+                drop_type = random.choice(['gems', 'stamina'])
+                if drop_type == 'gems':
+                    gems_found = random.randint(1, 3)
+                    player.gems += gems_found
+                    loot_msg = f"\n💎 **SORTUDO!** Você achou {gems_found} Gemas!"
+                else:
+                    player.stamina = min(player.max_stamina, player.stamina + 2)
+                    loot_msg = f"\n⚡ **ENERGIA!** Recuperou 2 Stamina!"
+            
+            msg = f"⚔️ **Vitória Gloriosa!**\nO inimigo caiu.\nSaque: +{m['gold']}g | +{m['xp']}xp{loot_msg}"
         else:
             msg = f"☠️ **Derrota...**\nO inimigo era muito forte. Tente melhorar seus atributos."
+        
         db.commit()
         kb = [[InlineKeyboardButton("Continuar", callback_data='menu_battle_mode')]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
-    # --- LÓGICA PVP (ATUALIZADA) ---
+    # --- PVP / ARENA (ATUALIZADO PARA PONTOS) ---
     elif data == 'battle_pvp_start':
-        # 1. Calcular Rank
         my_rank = db.query(Player).filter(Player.pvp_rating > player.pvp_rating).count() + 1
         
-        # 2. Faixa de busca (+/- 200)
+        # Faixa de busca (+/- 200 Pontos)
         rating_range = 200
         min_r = max(0, player.pvp_rating - rating_range)
         max_r = player.pvp_rating + rating_range
         
-        # 3. Buscar oponentes
         opponents = db.query(Player).filter(
             Player.id != player.id,
             Player.pvp_rating >= min_r, 
             Player.pvp_rating <= max_r
         ).order_by(func.random()).limit(4).all()
         
-        # Fallback (Mundo Vazio)
         if len(opponents) == 0:
             opponents = db.query(Player).filter(Player.id != player.id).order_by(func.random()).limit(4).all()
 
         kb = []
-        # Botões de Oponentes
         for opp in opponents:
-            # Emoji de Dificuldade
-            diff_icon = "🟢" # Fácil/Igual
+            diff_icon = "🟢" 
             if opp.pvp_rating > player.pvp_rating + 50: diff_icon = "🔴"
             elif opp.pvp_rating > player.pvp_rating: diff_icon = "🟡"
             
@@ -285,16 +317,16 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not opponents:
             kb.append([InlineKeyboardButton("Ninguém à vista...", callback_data='ignore')])
 
-        # Controles
         kb.append([
-            InlineKeyboardButton("🔄 Atualizar", callback_data='battle_pvp_start'),
+            InlineKeyboardButton("🔄 Atualizar Lista", callback_data='battle_pvp_start'),
             InlineKeyboardButton("🔙 Voltar", callback_data='menu_battle_mode')
         ])
 
         msg = (f"⚔️ **Arena PvP - Lobby**\n\n"
+               f"ℹ️ **Regras:** Vitória: +25 Pontos | Derrota: -15 Pontos\n\n"
                f"👤 **Seu Rank:** #{my_rank}\n"
-               f"🏆 **Seu Rating:** {player.pvp_rating}\n\n"
-               f"Escolha um oponente próximo ao seu nível:")
+               f"🏆 **Seus Pontos:** {player.pvp_rating}\n\n"
+               f"Escolha um oponente:")
         
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
@@ -304,12 +336,10 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not opp:
             await query.answer("Oponente sumiu!", show_alert=True)
-            await handle_menu(update, context) # Recarrega menu
-            return
+            await handle_menu(update, context); return
 
         context.user_data['opponent_id'] = opp.id
         
-        # Analisa dificuldade
         diff = opp.pvp_rating - player.pvp_rating
         chance_est = "Média"
         if diff > 100: chance_est = "Baixa ☠️"
@@ -322,7 +352,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         msg = (f"🆚 **Previsão de Batalha**\n\n"
                f"🫵 **Você** vs **{opp.name}**\n"
-               f"📊 Rating: {player.pvp_rating} vs {opp.pvp_rating}\n"
+               f"📊 Pontos: {player.pvp_rating} vs {opp.pvp_rating}\n"
                f"🎲 Chance de Vitória: {chance_est}\n\n"
                f"Deseja gastar 1 Stamina para atacar?")
         
@@ -334,25 +364,24 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not opp:
              await query.answer("Oponente inválido.", show_alert=True)
-             await handle_menu(update, context)
-             return
+             await handle_menu(update, context); return
 
         player.stamina -= STAMINA_COST
         
-        # SIMULAÇÃO PVP
         winner = simulate_pvp_battle(player, opp)
         
         if winner.id == player.id:
             player.pvp_rating += 25
-            msg = f"🏆 **Vitória!**\nVocê derrotou {opp.name}.\n+25 Rating"
+            msg = f"🏆 **Vitória!**\nVocê derrotou {opp.name}.\n+25 Pontos no Ranking!"
         else:
             player.pvp_rating = max(0, player.pvp_rating - 15)
-            msg = f"🏳️ **Derrota...**\n{opp.name} era mais forte.\n-15 Rating"
+            msg = f"🏳️ **Derrota...**\n{opp.name} era mais forte.\n-15 Pontos..."
             
         db.commit()
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Continuar", callback_data='battle_pvp_start')]]), parse_mode='Markdown')
 
-    # Guilda
+    # --- RESTANTE DO MENU (GUILDA, CONSTRUÇÃO, UPGRADE, ETC) ---
+    # Mantido idêntico para não quebrar funcionalidades
     elif data == 'menu_guild':
         if player.guild_id:
             g = db.query(Guild).filter(Guild.id == player.guild_id).first()
@@ -407,7 +436,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['waiting_donation_type'] = data.split('_')[-1]
         await query.edit_message_text(f"🏦 Digite o valor para doar:")
 
-    # --- MENU DE CONSTRUÇÕES ---
     elif data == 'menu_constructions':
         prod_h = player.farm_level * 10
         cap = player.barn_level * 100
@@ -460,7 +488,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await query.answer("🌾 Colheita vazia.")
         await handle_menu(update, context)
 
-    # --- UPGRADE ---
     elif data == 'menu_upgrade':
         msg = (f"💪 **Centro de Treinamento**\n\n"
                f"📊 **Seus Atributos:**\n"
@@ -501,7 +528,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"✨ **Renascimento Completo!**\nVocê agora é um {nc}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
         else: await query.answer("🚫 Gemas insuficientes!", show_alert=True)
 
-    # --- OUTROS ---
     elif data == 'menu_mailbox':
         kb = [[InlineKeyboardButton("📢 Canal Oficial", url=OFFICIAL_CHANNEL_LINK)], [InlineKeyboardButton("🔙", callback_data='menu_refresh')]]
         await query.edit_message_text("✉️ **Correio Real**\nFique atento aos decretos e eventos:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
@@ -526,7 +552,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == 'menu_ranking':
         top = db.query(Player).order_by(Player.pvp_rating.desc()).limit(10).all()
-        txt = "🏆 **Salão da Fama**\n" + "\n".join([f"#{i+1} {p.name} ({p.pvp_rating})" for i, p in enumerate(top)])
+        txt = "🏆 **Salão da Fama**\n" + "\n".join([f"#{i+1} {p.name} ({p.pvp_rating} Pts)" for i, p in enumerate(top)])
         await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data='menu_refresh')]]), parse_mode='Markdown')
 
     elif data == 'menu_refresh':
