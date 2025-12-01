@@ -124,17 +124,3 @@ def get_db():
     try: yield db
     finally: db.close()
 
-# No final do arquivo database.py
-
-def init_db():
-    # --- PERIGO: A LINHA ABAIXO APAGA TUDO ---
-    print("☢️ INICIANDO RESET TOTAL DO BANCO DE DADOS...")
-    Base.metadata.drop_all(bind=engine)
-    print("🗑️ Tabelas antigas removidas.")
-    
-    # --- RECRIANDO ---
-    Base.metadata.create_all(bind=engine)
-    print("✅ Novas tabelas criadas com sucesso (Versão Beta 2.0)!")
-
-# (O resto do arquivo continua igual)
-
